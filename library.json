@@ -1,0 +1,15 @@
+{
+    "name": "DWM1000_ESP32",
+    "version": "1.0.0",
+    "description": "DW1000 UWB driver for ESP32-S3 using ESP-IDF",
+    "keywords": "uwb, dw1000, dwm1000, esp32, esp-idf",
+    "frameworks": ["arduino", "espidf"],
+    "platforms": "espressif32",
+    "build": {
+        "flags": [
+            "-Isrc",
+            "-Isrc/decadriver",
+            "-Isrc/platform"
+        ]
+    }
+}
