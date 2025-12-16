@@ -123,6 +123,7 @@ namespace UWBRanging
         static volatile bool ranging_in_progress = false;
         static uint32_t ranging_interval_ms = 0;
         static TaskHandle_t ranging_task_handle = NULL;
+        static uint32_t ranging_task_priority = 1;
 
         /* Timestamps */
         static uint64_t poll_tx_ts;
@@ -280,12 +281,15 @@ namespace UWBRanging
             vTaskDelete(NULL);
         }
 
-        bool Initialize()
+        bool Initialize(uint32_t callback_priority, uint32_t ranging_priority)
         {
             if (initialized)
             {
                 return true;
             }
+
+            /* Store ranging task priority for use in Begin() */
+            ranging_task_priority = ranging_priority;
 
 #if DEBUG_INIT
             Serial.println("[Init] Initializing UWB Initiator");
@@ -340,7 +344,7 @@ namespace UWBRanging
             dwt_setrxantennadelay(RX_ANT_DLY);
             dwt_settxantennadelay(TX_ANT_DLY);
 
-            if (dw1000_setup_isr(6, &tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb) != 0)
+            if (dw1000_setup_isr(callback_priority, &tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Init] ERROR: dw1000_setup_isr failed!");
@@ -409,7 +413,7 @@ namespace UWBRanging
             running = true;
 
             /* Create ranging task */
-            xTaskCreate(RangingTask, "RangingTask", 2048, NULL, 5, &ranging_task_handle);
+            xTaskCreate(RangingTask, "RangingTask", 2048, NULL, ranging_task_priority, &ranging_task_handle);
 
 #if DEBUG_INIT
             Serial.printf("[Init] Started with interval %u ms\n", interval_ms);
@@ -618,7 +622,7 @@ namespace UWBRanging
             dw1000_spi_release_bus();
         }
 
-        QueueHandle_t Initialize()
+        QueueHandle_t Initialize(uint32_t callback_priority)
         {
             if (initialized)
             {
@@ -691,7 +695,7 @@ namespace UWBRanging
             dwt_setrxantennadelay(RX_ANT_DLY);
             dwt_settxantennadelay(TX_ANT_DLY);
 
-            if (dw1000_setup_isr(6, &tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb) != 0)
+            if (dw1000_setup_isr(callback_priority, &tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Resp] ERROR: dw1000_setup_isr failed!");

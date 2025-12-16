@@ -82,17 +82,19 @@ struct RangingResult {
 
 | Function | Description |
 |----------|-------------|
-| `bool Initialize()` | Initialize UWB hardware |
+| `bool Initialize(uint32_t callback_priority = 6, uint32_t ranging_priority = 1)` | Initialize UWB hardware, optionally specify task priorities |
 | `void Begin(uint32_t interval_ms)` | Start ranging (0 = manual mode) |
 | `void Stop()` | Stop ranging |
 | `bool TriggerRanging()` | Manually trigger one ranging exchange |
 | `bool IsActive()` | Check if initialized and running |
 
+**Task Priorities:** ISR task handles hardware interrupts; ranging task sends poll messages.
+
 ### Responder
 
 | Function | Description |
 |----------|-------------|
-| `QueueHandle_t Initialize()` | Initialize UWB hardware, returns queue handle |
+| `QueueHandle_t Initialize(uint32_t callback_priority = 6)` | Initialize UWB hardware, returns queue handle, optionally specify ISR task priority |
 | `void Begin()` | Start receiving ranging requests |
 | `void Stop()` | Stop receiving |
 | `bool IsActive()` | Check if initialized and running |

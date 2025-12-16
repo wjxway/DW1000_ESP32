@@ -34,9 +34,11 @@ namespace UWBRanging
     {
         /**
          * @brief Initialize UWB hardware as initiator
-         * @return true if successful, false otherwise
+         * @param callback_priority Priority of ISR task (default: 6)
+         * @param ranging_priority Priority of ranging task (default: 1)
+         * @return true if successful, false if failed
          */
-        bool Initialize();
+        bool Initialize(uint32_t callback_priority = 6, uint32_t ranging_priority = 1);
 
         /**
          * @brief Start UWB TX/RX routine with specified interval
@@ -72,10 +74,11 @@ namespace UWBRanging
     {
         /**
          * @brief Initialize UWB hardware as responder
+         * @param callback_priority Priority of ISR task (default: 6)
          * @return Queue handle for ranging results (NULL if failed)
          * @note Creates internal queue with size 10, overriding oldest results
          */
-        QueueHandle_t Initialize();
+        QueueHandle_t Initialize(uint32_t callback_priority = 6);
 
         /**
          * @brief Start UWB RX routine
