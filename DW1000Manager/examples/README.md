@@ -1,7 +1,7 @@
 # DW1000Manager Examples
 
 > **⚠️ WARNING: This documentation is AI-Generated Content (AIGC)**  
-> Please verify all code implementations independently.
+> Please verify all technical specifications, code implementations, and system designs independently. Do not rely solely on this documentation for critical system implementations.
 
 This directory contains example applications demonstrating DW1000Manager library usage.
 
@@ -57,7 +57,7 @@ The `Initialize()` function requires only **device-specific pins**:
 **Code**:
 ```cpp
 #include <Arduino.h>
-#include <DW1000Manager.hpp>
+#include <DW1000Initiator.hpp>
 #include <HardwareDefs.hpp>
 #include <driver/spi_master.h>
 
@@ -152,7 +152,7 @@ void loop() {
 **Code**:
 ```cpp
 #include <Arduino.h>
-#include <DW1000Manager.hpp>
+#include <DW1000Responder.hpp>
 #include <HardwareDefs.hpp>
 #include <driver/spi_master.h>
 #include <vector>

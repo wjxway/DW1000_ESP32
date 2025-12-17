@@ -1,7 +1,7 @@
 # DW1000Manager Library
 
 > **⚠️ WARNING: This documentation is AI-Generated Content (AIGC)**  
-> Please verify all technical specifications, code implementations, and system designs independently.
+> Please verify all technical specifications, code implementations, and system designs independently. Do not rely solely on this documentation for critical system implementations.
 
 ## Overview
 

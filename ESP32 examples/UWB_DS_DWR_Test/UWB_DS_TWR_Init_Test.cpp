@@ -126,13 +126,13 @@ static void final_msg_set_ts(uint8 *ts_field, uint64 ts);
 static void print_status_state(const char *prefix)
 {
 #if DEBUG_STATUS_STATE
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     sys_status_reg_t status;
     sys_state_reg_t state;
     char status_buf[512], state_buf[512];
     deca_get_sys_status(&status);
     deca_get_sys_state(&state);
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
     deca_get_status_string(&status, status_buf, sizeof(status_buf));
     deca_get_state_string(&state, state_buf, sizeof(state_buf));
     Serial.printf("[%s] Status: %s\n", prefix, status_buf);
@@ -155,7 +155,7 @@ void setup()
 {
     /* Initialize serial communication */
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000);
 
     /* Blink LED to indicate start */
     Blink(500, 3, true, true, true);
@@ -199,7 +199,7 @@ void setup()
     /* Reset DW1000 */
     dw1000_hard_reset();
     dw1000_spi_fix_bug();
-    delay(5);
+    vTaskDelay(5);
 
     /* Initialize DW1000 with LDE microcode for ranging */
     if (dwt_initialise(DWT_LOADUCODE) == DWT_ERROR)
@@ -245,8 +245,7 @@ void setup()
     Serial.println("========================================\n");
 
     // disable auto-bus acquisition to allow manual control of the SPI bus locks
-    dw1000_auto_bus_acquisition(false);
-}
+    }
 
 /**
  * @brief Arduino loop function - initiates ranging exchanges periodically
@@ -262,14 +261,14 @@ void loop()
     current_state = STATE_IDLE;
 
     /* Write poll frame data to DW1000 and prepare transmission */
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
     dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* ranging bit set */
 
     /* Start transmission with response expected */
     int tx_ret = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
 
     if (tx_ret == DWT_SUCCESS)
     {
@@ -302,11 +301,11 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
 {
     rx_ok_count++;
 
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
 
     if (current_state != STATE_POLL_SENT)
     {
-        dw1000_spi_release_bus();
+        decamutexoff(stat);
         print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
         Serial.printf("[RX_OK] #%lu Unexpected state %d, ignoring\n", rx_ok_count, current_state);
@@ -352,7 +351,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
             if (ret == DWT_SUCCESS)
             {
                 frame_seq_nb++;
-                dw1000_spi_release_bus();
+                decamutexoff(stat);
                 print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
                 Serial.printf("[RX_OK] #%lu RESP received, RX ts: %llu, sending FINAL\n", rx_ok_count, resp_rx_ts);
@@ -362,7 +361,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
             else
             {
                 reset_state_and_idle();
-                dw1000_spi_release_bus();
+                decamutexoff(stat);
                 print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
                 Serial.printf("[RX_OK] #%lu ERROR: Final TX failed (late): %d\n", rx_ok_count, ret);
@@ -373,7 +372,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
         else
         {
             reset_state_and_idle();
-            dw1000_spi_release_bus();
+            decamutexoff(stat);
             print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
             Serial.printf("[RX_OK] #%lu Response frame validation FAILED\n", rx_ok_count);
@@ -384,7 +383,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
     else
     {
         reset_state_and_idle();
-        dw1000_spi_release_bus();
+        decamutexoff(stat);
         print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
         Serial.printf("[RX_OK] #%lu Frame too long (%u > %d)\n", rx_ok_count, cb_data->datalength, RX_BUF_LEN);
@@ -405,9 +404,9 @@ static void rx_to_cb(const dwt_cb_data_t *cb_data)
 {
     rx_to_count++;
 
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     reset_state_and_idle();
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
 
     print_status_state("RX_TO");
 #if DEBUG_CALLBACKS
@@ -428,9 +427,9 @@ static void rx_err_cb(const dwt_cb_data_t *cb_data)
 {
     rx_err_count++;
 
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     reset_state_and_idle();
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
 
     print_status_state("RX_ERR");
 #if DEBUG_CALLBACKS
@@ -459,7 +458,7 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data)
         current_state = STATE_IDLE;
     }
 
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     dwt_forcetrxoff();
     // only enable RX if we just sent a POLL frame
     if (current_state == STATE_POLL_SENT)
@@ -468,7 +467,7 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data)
         dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
         dwt_rxenable(DWT_START_RX_DELAYED);
     }
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
 
     print_status_state("TX_CONF");
 

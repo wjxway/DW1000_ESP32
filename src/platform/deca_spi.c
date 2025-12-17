@@ -14,6 +14,7 @@
 #include <rom/ets_sys.h>
 
 #include "deca_spi.h"
+#include "deca_gpio.h"
 #include "decadriver/deca_device_api.h"
 #include "decadriver/deca_regs.h"
 
@@ -40,7 +41,6 @@ static spi_host_device_t spi_peripheral;
 static gpio_num_t cs_pin;
 static spi_device_interface_config_t spi_dev_cfg;
 static bool spi_bus_initialized_by_us = false;
-static bool spi_auto_bus_aquisition = true;
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * @fn dw1000_spi_init()
@@ -228,7 +228,7 @@ int writetospi(uint16 headerLength, const uint8 *headerBuffer, uint32 bodylength
         return -1;
     }
 
-    if (headerLength > DW1000_SPI_MAX_TRANSFER_SIZE || bodylength > DW1000_SPI_MAX_TRANSFER_SIZE)
+    if (headerLength + bodylength > DW1000_SPI_MAX_TRANSFER_SIZE)
     {
         ESP_LOGE(TAG, "Transfer size too large");
         return -1;
@@ -236,47 +236,25 @@ int writetospi(uint16 headerLength, const uint8 *headerBuffer, uint32 bodylength
 
     /* Disable DW1000 IRQ during SPI transaction */
     stat = decamutexon();
-
-    /* Acquire SPI bus */
-    if (spi_auto_bus_aquisition)
-    {
-        ret = dw1000_spi_acquire_bus();
-        if (ret != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Failed to acquire SPI bus: %s", esp_err_to_name(ret));
-            decamutexoff(stat);
-            return -1;
-        }
-    }
-
     /* Assert CS */
     gpio_set_level(cs_pin, 0);
 
-    /* Send header */
+    /* Prepare TX buffer */
+    memcpy(spi_tx_buffer, headerBuffer, headerLength);
+    if (bodylength > 0 && bodyBuffer != NULL)
+    {
+        memcpy(spi_tx_buffer + headerLength, bodyBuffer, bodylength);
+    }
+
+    /* Send in single transaction */
     memset(&trans, 0, sizeof(trans));
-    trans.length = headerLength * 8;
-    trans.tx_buffer = headerBuffer;
+    trans.length = (headerLength + bodylength) * 8;
+    trans.tx_buffer = spi_tx_buffer;
     trans.rx_buffer = NULL;
     ret = spi_device_polling_transmit(dw1000_spi_handle, &trans);
 
-    /* Send body if present */
-    if (ret == ESP_OK && bodylength > 0 && bodyBuffer != NULL)
-    {
-        memset(&trans, 0, sizeof(trans));
-        trans.length = bodylength * 8;
-        trans.tx_buffer = bodyBuffer;
-        trans.rx_buffer = NULL;
-        ret = spi_device_polling_transmit(dw1000_spi_handle, &trans);
-    }
-
     /* De-assert CS */
     gpio_set_level(cs_pin, 1);
-
-    /* Release SPI bus */
-    if (spi_auto_bus_aquisition)
-    {
-        dw1000_spi_release_bus();
-    }
 
     /* Re-enable DW1000 IRQ */
     decamutexoff(stat);
@@ -310,7 +288,7 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlengt
         return -1;
     }
 
-    if (headerLength > DW1000_SPI_MAX_TRANSFER_SIZE || readlength > DW1000_SPI_MAX_TRANSFER_SIZE)
+    if (headerLength + readlength > DW1000_SPI_MAX_TRANSFER_SIZE)
     {
         ESP_LOGE(TAG, "Transfer size too large");
         return -1;
@@ -318,48 +296,27 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlengt
 
     /* Disable DW1000 IRQ during SPI transaction */
     stat = decamutexon();
-
-    /* Acquire SPI bus */
-    if (spi_auto_bus_aquisition)
-    {
-        ret = dw1000_spi_acquire_bus();
-        if (ret != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Failed to acquire SPI bus: %s", esp_err_to_name(ret));
-            decamutexoff(stat);
-            return -1;
-        }
-    }
-
     /* Assert CS */
     gpio_set_level(cs_pin, 0);
 
-    /* Send header */
+    /* Prepare TX buffer with header */
+    memcpy(spi_tx_buffer, headerBuffer, headerLength);
+
+    /* Send header and receive data in single transaction */
     memset(&trans, 0, sizeof(trans));
-    trans.length = headerLength * 8;
-    trans.tx_buffer = headerBuffer;
-    trans.rx_buffer = NULL;
+    trans.length = (headerLength + readlength) * 8;
+    trans.tx_buffer = spi_tx_buffer;
+    trans.rx_buffer = spi_rx_buffer;
     ret = spi_device_polling_transmit(dw1000_spi_handle, &trans);
 
-    /* Read data */
-    if (ret == ESP_OK && readlength > 0)
+    /* Copy received data to output buffer */
+    if (readlength > 0)
     {
-        memset(&trans, 0, sizeof(trans));
-        trans.length = readlength * 8;
-        trans.tx_buffer = NULL;
-        trans.rx_buffer = readBuffer;
-        ret = spi_device_polling_transmit(dw1000_spi_handle, &trans);
+        memcpy(readBuffer, spi_rx_buffer + headerLength, readlength);
     }
 
     /* De-assert CS */
     gpio_set_level(cs_pin, 1);
-
-    /* Release SPI bus */
-    if (spi_auto_bus_aquisition)
-    {
-        dw1000_spi_release_bus();
-    }
-
     /* Re-enable DW1000 IRQ */
     decamutexoff(stat);
 
@@ -373,43 +330,55 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlengt
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_auto_bus_aquisition()
+ * Function: decamutexon()
  *
- * Enable or disable automatic bus acquisition for DW1000, when enabled, for each SPI transaction, the driver will automatically
- * acquire the bus and release it after the transaction is completed.
- * You might want to disable this feature if you want to do multiple SPI transactions in a row without releasing the bus in between.
- * @param enable - true to enable, false to disable
- * @note This function is enabled by default.
- * @warning You should be very careful when calling this. When it happens to be called during a SPI transaction, it can either
- * cause a deadlock or throw an fatal error.
+ * Description: This function should disable interrupts. This is called at the start of a critical section
+ * It returns the irq state before disable, this value is used to re-enable in decamutexoff call
+ *
+ * Note: The body of this function is defined in deca_mutex.c and is platform specific
+ *
+ * input parameters:
+ *
+ * output parameters
+ *
+ * returns the state of the DW1000 interrupt
+ * 
+ * @note Added acquisition of SPI bus in critical section 
  */
-int dw1000_auto_bus_acquisition(bool enable)
+decaIrqStatus_t decamutexon(void)
 {
-    spi_auto_bus_aquisition = enable;
-    return 0;
+    decaIrqStatus_t s = dw1000_gpio_get_irq_status();
+
+    if (s)
+    {
+        dw1000_gpio_disable_irq();
+        spi_device_acquire_bus(dw1000_spi_handle, portMAX_DELAY);
+    }
+    return s;
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_spi_acquire_bus()
+ * Function: decamutexoff()
  *
- * Acquire the SPI bus, this function will block until the bus is available.
- * @return ESP_OK if the bus was acquired successfully, or an error code if there was an error.
- * @warning This function is called automatically by the driver when automatic bus acquisition is enabled.
- * @warning You should NEVER call this function if automatic bus acquisition is enabled.
- * @note This function will not consume any CPU time while waiting.
+ * Description: This function should re-enable interrupts, or at least restore their state as returned(&saved) by decamutexon
+ * This is called at the end of a critical section
+ *
+ * Note: The body of this function is defined in deca_mutex.c and is platform specific
+ *
+ * input parameters:
+ * @param s - the state of the DW1000 interrupt as returned by decamutexon
+ *
+ * output parameters
+ *
+ * returns the state of the DW1000 interrupt
+ * 
+ * @note Added release of SPI bus after critical section
  */
-esp_err_t dw1000_spi_acquire_bus()
+void decamutexoff(decaIrqStatus_t s)
 {
-    return spi_device_acquire_bus(dw1000_spi_handle, portMAX_DELAY);
-}
-
-/*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_spi_release_bus()
- *
- * Release the SPI bus, this function will release the bus immediately.
- * @warning This function is called automatically by the driver when automatic bus acquisition is enabled.
- * @warning You should NEVER call this function if automatic bus acquisition is enabled. */
-void dw1000_spi_release_bus()
-{
-    spi_device_release_bus(dw1000_spi_handle);
+    if (s)
+    {
+        dw1000_gpio_enable_irq();
+        spi_device_release_bus(dw1000_spi_handle);
+    }
 }

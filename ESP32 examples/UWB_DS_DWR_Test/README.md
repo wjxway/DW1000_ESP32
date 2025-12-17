@@ -360,16 +360,15 @@ static uint64 get_tx_timestamp_u64(void) {
 These examples disable automatic SPI bus acquisition:
 
 ```cpp
-dw1000_auto_bus_acquisition(false);
 ```
 
 **Why?** Prevents deadlocks when ISR callbacks need SPI access. Callbacks manually acquire/release bus:
 
 ```cpp
 void rx_ok_cb(const dwt_cb_data_t *cb_data) {
-    dw1000_spi_acquire_bus();
+    decaIrqStatus_t stat = decamutexon();
     // ... DW1000 operations ...
-    dw1000_spi_release_bus();
+    decamutexoff(stat);
 }
 ```
 

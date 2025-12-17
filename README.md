@@ -78,16 +78,13 @@ DW1000 IRQ Pin → GPIO ISR (IRAM) → Task Notification → ISR Task → dwt_is
 Optional automatic SPI bus acquisition:
 
 ```cpp
-// Enabled by default
-dw1000_auto_bus_acquisition(true);
 dwt_readdevid();  // Automatically acquires and releases bus
 
 // Manual mode (for ISR callbacks)
-dw1000_auto_bus_acquisition(false);
-dw1000_spi_acquire_bus();
+decaIrqStatus_t stat = decamutexon();
 dwt_readdevid();
 dwt_writetxdata(...);
-dw1000_spi_release_bus();
+decamutexoff(stat);
 ```
 
 ## Platform Layer Functions
@@ -193,54 +190,13 @@ spi_set_rate_high();
 
 #### Bus Management
 
-##### dw1000_auto_bus_acquisition()
+Bus management is automatic by default, but you can manually force holding the bus for longer using mutex functions:
+
 ```cpp
-int dw1000_auto_bus_acquisition(bool enable);
+decaIrqStatus_t stat = decamutexon();  // Lock bus
+// Perform multiple SPI operations
+decamutexoff(stat);                 // Unlock bus
 ```
-
-**Purpose**: Enable/disable automatic SPI bus acquisition
-
-**Parameters**:
-- `enable` - `true` to enable (default), `false` to disable
-
-**Returns**: 
-- `0` on success
-- `-1` on error
-
-**When to disable**: In ISR callbacks to prevent deadlocks
-
-**Example**:
-```cpp
-// In setup
-dw1000_auto_bus_acquisition(false);
-
-// In callback
-void rx_ok_cb(const dwt_cb_data_t *cb_data) {
-    dw1000_spi_acquire_bus();
-    dwt_readrxdata(buffer, cb_data->datalength, 0);
-    dw1000_spi_release_bus();
-}
-```
-
-##### dw1000_spi_acquire_bus()
-```cpp
-esp_err_t dw1000_spi_acquire_bus(void);
-```
-
-**Purpose**: Manually acquire exclusive access to SPI bus
-
-**Returns**: `ESP_OK` on success
-
-**Blocks**: Until bus is available (uses `portMAX_DELAY`)
-
-##### dw1000_spi_release_bus()
-```cpp
-void dw1000_spi_release_bus(void);
-```
-
-**Purpose**: Release SPI bus lock
-
-⚠️ **Warning**: Must pair with `acquire_bus()` - no double-acquire or double-release!
 
 #### Low-Level Functions
 
@@ -692,9 +648,9 @@ dw1000_spi_init(SPI2_HOST, UWB_CS_PIN, NULL);  // NULL = bus already init
 spi_bus_add_device(SPI2_HOST, &imu_cfg, &imu_handle);
 
 // Use devices
-dw1000_spi_acquire_bus();
+decaIrqStatus_t stat = decamutexon();
 dwt_readdevid();
-dw1000_spi_release_bus();
+decamutexoff(stat);
 
 spi_device_acquire_bus(imu_handle, portMAX_DELAY);
 imu_read();

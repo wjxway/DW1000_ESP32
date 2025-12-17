@@ -49,7 +49,7 @@ void setup()
 {
     // Initialize serial communication
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000);
     Blink(500, 3);
 
     spi_device_interface_config_t spi_dev_config;
@@ -104,7 +104,7 @@ void setup()
     xTaskCreate(&try_spi_task, "try_spi_task", 4096, NULL, 4, nullptr); // launch SPI task (data processing merged in)
 
     // Wait a bit
-    delay(100);
+    vTaskDelay(100);
 }
 
 void loop()

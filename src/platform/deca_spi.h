@@ -99,37 +99,6 @@ int writetospi(uint16 headerLength, const uint8 *headerBuffer, uint32 bodylength
  */
 int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlength, uint8 *readBuffer);
 
-/*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_auto_bus_aquisition()
- *
- * Enable or disable automatic bus acquisition for DW1000, when enabled, for each SPI transaction, the driver will automatically
- * acquire the bus and release it after the transaction is completed.
- * You might want to disable this feature if you want to do multiple SPI transactions in a row without releasing the bus in between.
- * @param enable - true to enable, false to disable
- * @note This function is enabled by default.
- */
-int dw1000_auto_bus_acquisition(bool enable);
-
-/*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_spi_acquire_bus()
- *
- * Acquire the SPI bus, this function will block until the bus is available.
- * @return ESP_OK if the bus was acquired successfully, or an error code if there was an error.
- * @warning This function is called automatically by the driver when automatic bus acquisition is enabled.
- * @warning You should NEVER call this function if automatic bus acquisition is enabled.
- * @note This function will not consume any CPU time while waiting.
- */
-esp_err_t dw1000_spi_acquire_bus();
-
-/*! ------------------------------------------------------------------------------------------------------------------
- * Function: dw1000_spi_release_bus()
- *
- * Release the SPI bus, this function will release the bus immediately.
- * @warning This function is called automatically by the driver when automatic bus acquisition is enabled.
- * @warning You should NEVER call this function if automatic bus acquisition is enabled.
- */
-void dw1000_spi_release_bus();
-
 #ifdef __cplusplus
 }
 #endif

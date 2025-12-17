@@ -376,9 +376,9 @@ void dw1000_spi_release_bus() {
 When sharing SPI bus with IMU:
 ```cpp
 // DWM1000 operations
-dw1000_spi_acquire_bus();
+decaIrqStatus_t stat = decamutexon();
 dwt_readdevid();
-dw1000_spi_release_bus();
+decamutexoff(stat);
 
 // IMU operations
 imu_spi_acquire_bus();

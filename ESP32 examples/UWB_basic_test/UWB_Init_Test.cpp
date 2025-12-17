@@ -41,7 +41,7 @@ void setup()
 {
     /* Initialize serial communication */
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000);
 
     /* Blink LED to indicate start */
     Blink(500, 3, true, true, true);
@@ -88,7 +88,7 @@ void setup()
     dw1000_hard_reset();
     dw1000_spi_fix_bug(); // Apply SPI bug fix after reset
     Serial.println("DW1000 reset complete");
-    delay(5);
+    vTaskDelay(5);
 
     /* Initialize DW1000 with microcode */
     Serial.println("Calling dwt_initialise(DWT_LOADUCODE)...");
@@ -124,5 +124,5 @@ void setup()
  */
 void loop()
 {
-    delay(1000);
+    vTaskDelay(1000);
 }

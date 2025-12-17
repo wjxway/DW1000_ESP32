@@ -11,8 +11,10 @@
  */
 
 #include "deca_gpio.h"
+#include "deca_spi.h"
 #include "decadriver/deca_device_api.h"
 #include "decadriver/deca_regs.h"
+
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -36,9 +38,11 @@ static void dw1000_irq_task(void *arg)
     {
         /* Wait for notification from ISR */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        
+
         /* Call DW1000 ISR handler */
+        decaIrqStatus_t stat = decamutexon();
         dwt_isr();
+        decamutexoff(stat);
     }
 }
 
@@ -135,11 +139,8 @@ int dw1000_setup_isr(uint32_t task_priority,
                      dwt_cb_t cbRxTo,
                      dwt_cb_t cbRxErr)
 {
-    /* Use default priority if 0 is specified */
-    if (task_priority == 0)
-    {
-        task_priority = 6;
-    }
+    /* Set interrupt polarity on DWM1000 to positive edge triggering */
+    dwt_write32bitreg(SYS_CFG_ID, dwt_read32bitreg(SYS_CFG_ID) | SYS_CFG_HIRQ_POL);
 
     /* Create IRQ handling task */
     BaseType_t task_result = xTaskCreate(
@@ -176,9 +177,6 @@ int dw1000_setup_isr(uint32_t task_priority,
         dw1000_irq_task_handle = NULL;
         return -1;
     }
-
-    /* Set interrupt polarity on DWM1000 to positive edge triggering */
-    dwt_write32bitreg(SYS_CFG_ID, dwt_read32bitreg(SYS_CFG_ID) | SYS_CFG_HIRQ_POL);
 
     /* Set DW1000 callbacks */
     dwt_setcallbacks(cbTxDone, cbRxOk, cbRxTo, cbRxErr);
