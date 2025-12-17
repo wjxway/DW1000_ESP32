@@ -48,7 +48,7 @@ static bool spi_auto_bus_aquisition = true;
  * @brief Initialize the SPI interface with the given configuration
  * WARNING: After calling dwt_initialise(), you must call dw1000_spi_fix_bug() before normal operation
  */
-int dw1000_spi_init(spi_host_device_t spi_peripheral_in, gpio_num_t io_cs, const spi_bus_config_t *spi_bus)
+int dw1000_spi_init(spi_host_device_t spi_peripheral_in, gpio_num_t io_cs, const spi_bus_config_t *spi_bus_cfg)
 {
     esp_err_t ret;
 
@@ -67,10 +67,10 @@ int dw1000_spi_init(spi_host_device_t spi_peripheral_in, gpio_num_t io_cs, const
     gpio_set_level(io_cs, 1); /* CS high (inactive) */
 
     /* Initialize SPI bus if bus config is provided */
-    if (spi_bus != NULL)
+    if (spi_bus_cfg != NULL)
     {
         /* Use provided bus configuration */
-        ret = spi_bus_initialize(spi_peripheral, spi_bus, SPI_DMA_CH_AUTO);
+        ret = spi_bus_initialize(spi_peripheral, spi_bus_cfg, SPI_DMA_CH_AUTO);
         if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE)
         {
             ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(ret));
@@ -81,7 +81,7 @@ int dw1000_spi_init(spi_host_device_t spi_peripheral_in, gpio_num_t io_cs, const
             spi_bus_initialized_by_us = true;
         }
     }
-    /* If spi_bus is NULL, assume bus is already initialized externally */
+    /* If spi_bus_cfg is NULL, assume bus is already initialized externally */
 
     /* Configure SPI device - start with slow speed */
     memset(&spi_dev_cfg, 0, sizeof(spi_dev_cfg));

@@ -9,7 +9,9 @@
 
 #include <Arduino.h>
 #include <DW1000Manager.hpp>
+#include <HardwareDefs.hpp>
 #include <Blink.hpp>
+#include <driver/spi_master.h>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -65,7 +67,7 @@ Statistics CalculateStatistics(const std::vector<double>& distances, uint32_t ti
 void setup()
 {
     Serial.begin(115200);
-    delay(1000);
+    vTaskDelay(1000);
     
     /* Blink LED to indicate start */
     Blink(500, 3, true, true, true);
@@ -73,15 +75,37 @@ void setup()
     Serial.println("\n=== UWB DS-TWR Responder Test ===");
     Serial.println("Initializing...");
     
+    // this is only necessary on my test board where another IMU is present.
+    pinMode(IMU_CS_PIN, OUTPUT);
+    digitalWrite(IMU_CS_PIN, HIGH);
+    
+    // Initialize SPI bus
+    spi_bus_config_t spi_bus_cfg = {
+        .mosi_io_num = (gpio_num_t)SPI_MOSI_PIN,
+        .miso_io_num = (gpio_num_t)SPI_MISO_PIN,
+        .sclk_io_num = (gpio_num_t)SPI_CLK_PIN,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 1024,
+        .flags = 0,
+        .intr_flags = 0
+    };
+    
+    if (spi_bus_initialize(SPI2_HOST, &spi_bus_cfg, SPI_DMA_CH_AUTO) != ESP_OK)
+    {
+        Serial.println("ERROR: Failed to initialize SPI bus!");
+        while (1) { vTaskDelay(1000); }
+    }
+    
     // Initialize the UWB hardware
-    ranging_queue = UWBRanging::Responder::Initialize();
+    ranging_queue = UWBRanging::Responder::Initialize(UWB_CS_PIN, UWB_IRQ_PIN, UWB_RST_PIN);
     
     if (ranging_queue == NULL)
     {
         Serial.println("ERROR: Failed to initialize UWB Responder!");
         while (1)
         {
-            delay(1000);
+            vTaskDelay(1000);
         }
     }
     
@@ -144,5 +168,5 @@ void loop()
         Serial.println("WARNING: Responder is not active!");
     }
     
-    delay(10);
+    vTaskDelay(10);
 }

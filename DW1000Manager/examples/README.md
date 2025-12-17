@@ -5,6 +5,41 @@
 
 This directory contains example applications demonstrating DW1000Manager library usage.
 
+## Important Setup Requirements
+
+### SPI Bus Pre-initialization
+
+**CRITICAL**: Before using any DW1000Manager functions, you **must** initialize the SPI bus (SPI2_HOST):
+
+```cpp
+// Step 1: Initialize SPI bus
+spi_bus_config_t spi_cfg = {
+    .mosi_io_num = SPI_MOSI_PIN,
+    .miso_io_num = SPI_MISO_PIN,
+    .sclk_io_num = SPI_CLK_PIN,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
+    .max_transfer_sz = 1024,
+    .flags = 0,
+    .intr_flags = 0
+};
+spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO);
+
+// Step 2: Initialize DW1000 device (only device pins needed)
+UWBRanging::Initiator::Initialize(UWB_CS_PIN, UWB_IRQ_PIN, UWB_RST_PIN);
+```
+
+### Initialize() Parameters
+
+The `Initialize()` function requires only **device-specific pins**:
+- **cs_pin**: SPI chip select for DW1000
+- **int_pin**: Interrupt pin from DW1000  
+- **rst_pin**: Reset pin for DW1000
+- **callback_priority** (optional): ISR task priority (default 6)
+- **ranging_priority** (optional, Initiator only): Ranging task priority (default 1)
+
+**Note**: SPI bus pins (MOSI, MISO, SCLK) are NOT needed since the bus is already initialized.
+
 ## Available Examples
 
 ### 1. Initiator (TestInitiator.cpp)
@@ -23,6 +58,8 @@ This directory contains example applications demonstrating DW1000Manager library
 ```cpp
 #include <Arduino.h>
 #include <DW1000Manager.hpp>
+#include <HardwareDefs.hpp>
+#include <driver/spi_master.h>
 
 void setup() {
     Serial.begin(115200);
@@ -31,12 +68,27 @@ void setup() {
     Serial.println("\n=== UWB DS-TWR Initiator Test ===");
     Serial.println("Initializing...");
     
-    // Initialize the UWB hardware
-    if (!UWBRanging::Initiator::Initialize()) {
+    // Step 1: Initialize SPI bus
+    spi_bus_config_t spi_cfg = {
+        .mosi_io_num = SPI_MOSI_PIN,
+        .miso_io_num = SPI_MISO_PIN,
+        .sclk_io_num = SPI_CLK_PIN,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 1024,
+        .flags = 0,
+        .intr_flags = 0
+    };
+    
+    if (spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO) != ESP_OK) {
+        Serial.println("ERROR: Failed to initialize SPI bus!");
+        while (1) { delay(1000); }
+    }
+    
+    // Step 2: Initialize UWB hardware (only device pins needed)
+    if (!UWBRanging::Initiator::Initialize(UWB_CS_PIN, UWB_IRQ_PIN, UWB_RST_PIN)) {
         Serial.println("ERROR: Failed to initialize UWB Initiator!");
-        while (1) {
-            delay(1000);
-        }
+        while (1) { delay(1000); }
     }
     
     Serial.println("UWB Initiator initialized successfully");
@@ -101,6 +153,8 @@ void loop() {
 ```cpp
 #include <Arduino.h>
 #include <DW1000Manager.hpp>
+#include <HardwareDefs.hpp>
+#include <driver/spi_master.h>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -155,14 +209,29 @@ void setup() {
     Serial.println("\n=== UWB DS-TWR Responder Test ===");
     Serial.println("Initializing...");
     
-    // Initialize the UWB hardware
-    ranging_queue = UWBRanging::Responder::Initialize();
+    // Step 1: Initialize SPI bus
+    spi_bus_config_t spi_cfg = {
+        .mosi_io_num = SPI_MOSI_PIN,
+        .miso_io_num = SPI_MISO_PIN,
+        .sclk_io_num = SPI_CLK_PIN,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 1024,
+        .flags = 0,
+        .intr_flags = 0
+    };
+    
+    if (spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO) != ESP_OK) {
+        Serial.println("ERROR: Failed to initialize SPI bus!");
+        while (1) { delay(1000); }
+    }
+    
+    // Step 2: Initialize UWB hardware (returns queue handle)
+    ranging_queue = UWBRanging::Responder::Initialize(UWB_CS_PIN, UWB_IRQ_PIN, UWB_RST_PIN);
     
     if (ranging_queue == NULL) {
         Serial.println("ERROR: Failed to initialize UWB Responder!");
-        while (1) {
-            delay(1000);
-        }
+        while (1) { delay(1000); }
     }
     
     Serial.println("UWB Responder initialized successfully");
@@ -376,6 +445,19 @@ while True:
         plt.plot(distances)
         plt.pause(0.01)
 ```
+
+## Summary
+
+Both examples demonstrate the simplified initialization process:
+
+1. **Initialize SPI bus** (SPI2_HOST) with standard ESP32 SPI configuration
+2. **Call Initialize()** with only 3 device pins (CS, INT, RST)  
+3. **Call Begin()** to start operation
+4. **Use results** from queue (Responder) or rely on automatic polling (Initiator)
+
+The key change from previous versions is that **SPI bus initialization is now the user's responsibility**, allowing better integration with multi-device SPI systems. The library only configures the DW1000 device itself.
+
+For complete API documentation, see [../README.md](../README.md).
 
 ---
 

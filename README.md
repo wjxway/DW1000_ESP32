@@ -101,7 +101,7 @@ dw1000_spi_release_bus();
 int dw1000_spi_init(
     spi_host_device_t spi_peripheral,
     gpio_num_t io_cs,
-    const spi_bus_config_t *spi_bus
+    const spi_bus_config_t *spi_bus_cfg
 );
 ```
 

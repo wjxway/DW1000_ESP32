@@ -29,10 +29,10 @@ extern "C" {
  * WARNING: After calling dwt_initialise(), you must call dw1000_spi_fix_bug() before normal operation
  * @param spi_peripheral - SPI host (SPI2_HOST or SPI3_HOST)
  * @param io_cs - CS pin number
- * @param spi_bus - Pointer to spi_bus_config_t, or NULL if bus is already initialized
+ * @param spi_bus_cfg - Pointer to spi_bus_config_t, or NULL if bus is already initialized
  * returns 0 for success, or -1 for error
  */
-int dw1000_spi_init(spi_host_device_t spi_peripheral, gpio_num_t io_cs, const spi_bus_config_t *spi_bus);
+int dw1000_spi_init(spi_host_device_t spi_peripheral, gpio_num_t io_cs, const spi_bus_config_t *spi_bus_cfg);
 
 /*! ------------------------------------------------------------------------------------------------------------------
  * Function: dw1000_spi_deinit()

@@ -4,7 +4,6 @@
  */
 
 #include "DW1000Manager.hpp"
-#include <HardwareDefs.hpp>
 
 extern "C"
 {
@@ -21,7 +20,7 @@ extern "C"
 namespace UWBRanging
 {
     /* SPI Host */
-    constexpr spi_host_device_t SPI_HOST = SPI2_HOST;
+    constexpr spi_host_device_t uwb_spi_host = SPI2_HOST;
 
     /* Fixed configuration matching DS-TWR test examples */
     static dwt_config_t dw1000_config = {
@@ -108,7 +107,6 @@ namespace UWBRanging
             *ts += ts_field[i] << (i * 8);
         }
     }
-
 
     //==============================================================================
     // INITIATOR IMPLEMENTATION
@@ -281,7 +279,7 @@ namespace UWBRanging
             vTaskDelete(NULL);
         }
 
-        bool Initialize(uint32_t callback_priority, uint32_t ranging_priority)
+        bool Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority, uint32_t ranging_priority)
         {
             if (initialized)
             {
@@ -295,22 +293,8 @@ namespace UWBRanging
             Serial.println("[Init] Initializing UWB Initiator");
 #endif
 
-            /* Setup IMU CS pin to high (deselect IMU) */
-            pinMode(IMU_CS_PIN, OUTPUT);
-            digitalWrite(IMU_CS_PIN, HIGH);
-
-            /* Configure SPI bus */
-            spi_bus_config_t spi_bus_cfg = {
-                .mosi_io_num = (gpio_num_t)SPI_MOSI_PIN,
-                .miso_io_num = (gpio_num_t)SPI_MISO_PIN,
-                .sclk_io_num = (gpio_num_t)SPI_CLK_PIN,
-                .quadwp_io_num = -1,
-                .quadhd_io_num = -1,
-                .max_transfer_sz = 1024,
-                .flags = 0,
-                .intr_flags = 0};
-
-            if (dw1000_spi_init(SPI_HOST, (gpio_num_t)UWB_CS_PIN, &spi_bus_cfg) != 0)
+            /* Initialize DW1000 SPI device (SPI bus already initialized) */
+            if (dw1000_spi_init(uwb_spi_host, (gpio_num_t)cs_pin, NULL) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Init] ERROR: SPI init failed!");
@@ -318,7 +302,7 @@ namespace UWBRanging
                 return false;
             }
 
-            if (dw1000_gpio_init((gpio_num_t)UWB_RST_PIN, (gpio_num_t)UWB_IRQ_PIN, GPIO_NUM_NC) != 0)
+            if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Init] ERROR: GPIO init failed!");
@@ -622,7 +606,7 @@ namespace UWBRanging
             dw1000_spi_release_bus();
         }
 
-        QueueHandle_t Initialize(uint32_t callback_priority)
+        QueueHandle_t Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority)
         {
             if (initialized)
             {
@@ -640,22 +624,8 @@ namespace UWBRanging
             Serial.println("[Resp] Initializing UWB Responder");
 #endif
 
-            /* Setup IMU CS pin to high (deselect IMU) */
-            pinMode(IMU_CS_PIN, OUTPUT);
-            digitalWrite(IMU_CS_PIN, HIGH);
-
-            /* Configure SPI bus */
-            spi_bus_config_t spi_bus_cfg = {
-                .mosi_io_num = (gpio_num_t)SPI_MOSI_PIN,
-                .miso_io_num = (gpio_num_t)SPI_MISO_PIN,
-                .sclk_io_num = (gpio_num_t)SPI_CLK_PIN,
-                .quadwp_io_num = -1,
-                .quadhd_io_num = -1,
-                .max_transfer_sz = 1024,
-                .flags = 0,
-                .intr_flags = 0};
-
-            if (dw1000_spi_init(SPI_HOST, (gpio_num_t)UWB_CS_PIN, &spi_bus_cfg) != 0)
+            /* Initialize DW1000 SPI device (SPI bus already initialized) */
+            if (dw1000_spi_init(uwb_spi_host, (gpio_num_t)cs_pin, NULL) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Resp] ERROR: SPI init failed!");
@@ -665,7 +635,7 @@ namespace UWBRanging
                 return NULL;
             }
 
-            if (dw1000_gpio_init((gpio_num_t)UWB_RST_PIN, (gpio_num_t)UWB_IRQ_PIN, GPIO_NUM_NC) != 0)
+            if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
             {
 #if DEBUG_INIT
                 Serial.println("[Resp] ERROR: GPIO init failed!");

@@ -34,11 +34,15 @@ namespace UWBRanging
     {
         /**
          * @brief Initialize UWB hardware as initiator
+         * @param cs_pin SPI chip select pin
+         * @param int_pin Interrupt pin
+         * @param rst_pin Reset pin
          * @param callback_priority Priority of ISR task (default: 6)
          * @param ranging_priority Priority of ranging task (default: 1)
          * @return true if successful, false if failed
+         * @note SPI bus (SPI2_HOST) must be initialized before calling this function
          */
-        bool Initialize(uint32_t callback_priority = 6, uint32_t ranging_priority = 1);
+        bool Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority = 6, uint32_t ranging_priority = 1);
 
         /**
          * @brief Start UWB TX/RX routine with specified interval
@@ -74,11 +78,15 @@ namespace UWBRanging
     {
         /**
          * @brief Initialize UWB hardware as responder
+         * @param cs_pin SPI chip select pin
+         * @param int_pin Interrupt pin
+         * @param rst_pin Reset pin
          * @param callback_priority Priority of ISR task (default: 6)
          * @return Queue handle for ranging results (NULL if failed)
          * @note Creates internal queue with size 10, overriding oldest results
+         * @note SPI bus (SPI2_HOST) must be initialized before calling this function
          */
-        QueueHandle_t Initialize(uint32_t callback_priority = 6);
+        QueueHandle_t Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority = 6);
 
         /**
          * @brief Start UWB RX routine

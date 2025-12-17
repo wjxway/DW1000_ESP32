@@ -25,10 +25,26 @@ High-level interface for UWB ranging using DW1000 with Double-Sided Two-Way Rang
 
 ```cpp
 #include <DW1000Manager.hpp>
+#include <driver/spi_master.h>
 
 void setup() {
-    // Initialize hardware
-    if (!UWBRanging::Initiator::Initialize()) {
+    // Initialize SPI bus first
+    spi_bus_config_t spi_cfg = {
+        .mosi_io_num = 11,
+        .miso_io_num = 13,
+        .sclk_io_num = 12,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 1024
+    };
+    spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO);
+    
+    // Initialize UWB hardware (only device-specific pins needed)
+    if (!UWBRanging::Initiator::Initialize(
+            10,  // CS pin
+            15,  // INT pin
+            6))  // RST pin
+    {
         // Handle error
     }
     
@@ -45,12 +61,27 @@ void loop() {
 
 ```cpp
 #include <DW1000Manager.hpp>
+#include <driver/spi_master.h>
 
 QueueHandle_t queue;
 
 void setup() {
-    // Initialize and get queue handle
-    queue = UWBRanging::Responder::Initialize();
+    // Initialize SPI bus first
+    spi_bus_config_t spi_cfg = {
+        .mosi_io_num = 11,
+        .miso_io_num = 13,
+        .sclk_io_num = 12,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 1024
+    };
+    spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO);
+    
+    // Initialize UWB and get queue handle (only device-specific pins needed)
+    queue = UWBRanging::Responder::Initialize(
+        10,  // CS pin
+        15,  // INT pin
+        6);  // RST pin
     if (queue == NULL) {
         // Handle error
     }
@@ -82,11 +113,13 @@ struct RangingResult {
 
 | Function | Description |
 |----------|-------------|
-| `bool Initialize(uint32_t callback_priority = 6, uint32_t ranging_priority = 1)` | Initialize UWB hardware, optionally specify task priorities |
+| `bool Initialize(cs_pin, int_pin, rst_pin, callback_priority=6, ranging_priority=1)` | Initialize UWB hardware with device pins |
 | `void Begin(uint32_t interval_ms)` | Start ranging (0 = manual mode) |
 | `void Stop()` | Stop ranging |
 | `bool TriggerRanging()` | Manually trigger one ranging exchange |
 | `bool IsActive()` | Check if initialized and running |
+
+**Note**: SPI bus (SPI2_HOST) must be initialized before calling `Initialize()`.
 
 **Task Priorities:** ISR task handles hardware interrupts; ranging task sends poll messages.
 
@@ -94,14 +127,16 @@ struct RangingResult {
 
 | Function | Description |
 |----------|-------------|
-| `QueueHandle_t Initialize(uint32_t callback_priority = 6)` | Initialize UWB hardware, returns queue handle, optionally specify ISR task priority |
+| `QueueHandle_t Initialize(cs_pin, int_pin, rst_pin, callback_priority=6)` | Initialize UWB hardware, returns queue handle |
 | `void Begin()` | Start receiving ranging requests |
 | `void Stop()` | Stop receiving |
 | `bool IsActive()` | Check if initialized and running |
 
+**Note**: SPI bus (SPI2_HOST) must be initialized before calling `Initialize()`.
+
 ## Hardware Setup
 
-Pin configuration (defined in `HardwareDefs.hpp`):
+Pin configuration is passed to `Initialize()` function. Example wiring:
 
 ```
 ESP32-S3          DW1000
@@ -110,13 +145,16 @@ GPIO 11  -------> MOSI
 GPIO 13  <------- MISO
 GPIO 12  -------> SCLK
 GPIO 10  -------> CS
-GPIO 14  -------> RST
-GPIO 9   <------- IRQ
+GPIO 6   -------> RST
+GPIO 15  <------- IRQ
 3.3V     -------> VDD
 GND      -------> GND
 ```
 
-**Important**: DW1000 is 3.3V only!
+**Important**: 
+- DW1000 is 3.3V only!
+- SPI bus must be initialized before calling DW1000Manager::Initialize()
+- Pins are configurable via Initialize() parameters
 
 ## Performance
 
@@ -171,15 +209,53 @@ For improved accuracy:
 
 See [examples/README.md](examples/README.md) for complete example applications.
 
-## Migration from Old API
+## Important Notes
 
-| Old | New |
-|-----|-----|
-| `begin()` | `Initialize()` |
-| `triggerRanging()` | `TriggerRanging()` |
-| `isActive()` | `IsActive()` |
-| `setInterval(ms)` | `Begin(ms)` |
-| External queue creation | Internal (returned by `Initialize()`) |
+### SPI Bus Initialization
+
+**CRITICAL**: The SPI bus (SPI2_HOST) must be initialized **before** calling `Initialize()`. The library expects the SPI bus to be ready and will only configure the DW1000 device on that bus.
+
+```cpp
+// Step 1: Initialize SPI bus
+spi_bus_config_t spi_cfg = {
+    .mosi_io_num = 11,
+    .miso_io_num = 13,
+    .sclk_io_num = 12,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
+    .max_transfer_sz = 1024
+};
+spi_bus_initialize(SPI2_HOST, &spi_cfg, SPI_DMA_CH_AUTO);
+
+// Step 2: Initialize DW1000 device (only device pins needed)
+UWBRanging::Initiator::Initialize(cs_pin, int_pin, rst_pin);
+```
+
+### Pin Parameters
+
+The `Initialize()` function only requires **device-specific pins**:
+- `cs_pin`: SPI chip select for DW1000
+- `int_pin`: Interrupt pin from DW1000
+- `rst_pin`: Reset pin for DW1000
+
+SPI bus pins (MOSI, MISO, SCLK) are **not** needed since the bus is already initialized.
+
+### Task Priorities
+
+Optional parameters control FreeRTOS task priorities:
+- **Initiator**: `callback_priority` (default 6), `ranging_priority` (default 1)
+- **Responder**: `callback_priority` (default 6)
+
+Higher priority values = higher priority tasks.
+
+## Migration from Previous Versions
+
+| Previous API | Current API |
+|--------------|-------------|
+| Hardware pins in `HardwareDefs.hpp` | Pins passed to `Initialize()` |
+| Library initializes SPI bus | **User must initialize SPI2_HOST first** |
+| 6 pin parameters (including MOSI/MISO/SCLK) | 3 pin parameters (CS/INT/RST only) |
+| Fixed task priorities | Configurable via Initialize() parameters |
 
 ## License
 
@@ -187,88 +263,5 @@ Built on DWM1000_ESP32 (DecaWave driver port). See component licenses.
 
 ---
 
-**Version**: 1.0  
+**Version**: 2.0  
 **Last Updated**: 2025-12-16
-    
-    // Create queue for ranging results
-    ranging_queue = xQueueCreate(10, sizeof(UWBRanging::RangingResult));
-    
-    if (ranging_queue == NULL) {
-        Serial.println("Failed to create queue");
-        while(1);
-    }
-    
-    // Initialize UWB as responder with queue
-    if (!UWBRanging::Responder::begin(ranging_queue)) {
-        Serial.println("Failed to initialize UWB Responder");
-        while(1);
-    }
-    
-    Serial.println("UWB Responder ready");
-}
-
-void loop() {
-    UWBRanging::RangingResult result;
-    
-    // Check for new ranging results
-    if (xQueueReceive(ranging_queue, &result, 0) == pdTRUE) {
-        Serial.printf("Distance: %.3f m, Time: %llu us\n", 
-                      result.distance_m, 
-                      result.measurement_time_us);
-    }
-    
-    delay(10);
-}
-```
-
-## API Reference
-
-### Data Structures
-
-#### `UWBRanging::RangingResult`
-- `double distance_m` - Distance in meters
-- `uint64_t measurement_time_us` - Timestamp in microseconds (from `esp_timer_get_time()`)
-
-### Initiator Functions
-
-#### `bool UWBRanging::Initiator::begin()`
-Initialize UWB hardware as initiator. Returns `true` on success.
-
-#### `bool UWBRanging::Initiator::triggerRanging()`
-Trigger a single ranging exchange (non-blocking). Returns `true` if successfully initiated.
-Note: Initiator only triggers the exchange; distance is calculated by the responder.
-
-#### `bool UWBRanging::Initiator::isActive()`
-Check if initiator is initialized and ready. Returns `true` if active.
-
-### Responder Functions
-
-#### `bool UWBRanging::Responder::begin(QueueHandle_t result_queue)`
-Initialize UWB hardware as responder. 
-- `result_queue` - FreeRTOS queue handle for receiving results (must be created with `sizeof(RangingResult)`)
-- Returns `true` on success
-
-When ranging completes, results are automatically pushed to the queue from ISR context.
-
-## Configuration
-
-The library uses a fixed configuration optimized for DS-TWR:
-- Channel: 1
-- PRF: 64 MHz
-- Preamble: 128 symbols
-- Data rate: 850 kbps
-- TX/RX antenna delay: 16436
-
-## Debug Output
-
-To enable debug output, edit `DW1000Manager.cpp`:
-```cpp
-#define DEBUG_INIT 1     // Initialization messages
-#define DEBUG_RANGING 1  // Ranging event messages
-```
-
-## Dependencies
-
-- DWM1000_ESP32 library (included in project)
-- HardwareDefs library (for pin definitions)
-- FreeRTOS (ESP-IDF)
