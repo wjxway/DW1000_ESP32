@@ -31,8 +31,8 @@ namespace UWBRanging
         static uint64_t final_rx_ts;
 
         /* Delays and timeouts */
-        constexpr uint16_t POLL_RX_TO_RESP_TX_DLY_UUS = 2000;
-        constexpr uint16_t RESP_TX_TO_FINAL_RX_DLY_UUS = 1900;
+        constexpr uint16_t POLL_RX_TO_RESP_TX_DLY_UUS = 3000;
+        constexpr uint16_t RESP_TX_TO_FINAL_RX_DLY_UUS = 2000;
         constexpr uint16_t FINAL_RX_TIMEOUT_UUS = 5000;
 
         /* Queue configuration */
@@ -108,7 +108,7 @@ namespace UWBRanging
             if (cb_data->datalength > RX_BUF_LEN)
             {
 #if DEBUG_CALLBACKS
-                Serial.println("[RXOK] Buffer overflow");
+                Serial.printf("[RXOK] Buffer overflow @ %lld\n", esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
                 ResetState();
@@ -130,18 +130,22 @@ namespace UWBRanging
                 dwt_writetxdata(RESP_MSG_LEN, resp_msg, 0);
                 dwt_writetxfctrl(RESP_MSG_LEN, 0, 1);
 
+                // Set expected delay and timeout for final message reception
+                dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
+                dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
+
                 if (dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED) == DWT_SUCCESS)
                 {
                     frame_seq_nb++;
 #if DEBUG_CALLBACKS
-                    Serial.printf("[RXOK] Poll received, response sent (seq=%d)\n", frame_seq_nb - 1);
+                    Serial.printf("[RXOK] Poll received, response sent (seq=%d) @ %lld\n", frame_seq_nb - 1, esp_timer_get_time());
                     PrintStatusState("RXOK");
 #endif
                 }
                 else
                 {
 #if DEBUG_CALLBACKS
-                    Serial.println("[RXOK] Response TX failed");
+                    Serial.printf("[RXOK] Response TX failed @ %lld\n", esp_timer_get_time());
                     PrintStatusState("RXOK");
 #endif
                     ResetState();
@@ -151,6 +155,7 @@ namespace UWBRanging
             {
                 CalculateAndReportDistance();
 #if DEBUG_CALLBACKS
+                Serial.printf("[RXOK] Final received (seq=%d) @ %lld\n", frame_seq_nb - 1, esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
                 ResetState();
@@ -158,7 +163,7 @@ namespace UWBRanging
             else
             {
 #if DEBUG_CALLBACKS
-                Serial.printf("[RXOK] Unexpected message/state=%d\n", current_state);
+                Serial.printf("[RXOK] Unexpected message/state=%d @ %lld\n", current_state, esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
                 ResetState();
@@ -168,6 +173,7 @@ namespace UWBRanging
         static void RxTimeoutCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
+            Serial.printf("[RXTO] RX timeout @ %lld\n", esp_timer_get_time());
             PrintStatusState("RXTO");
 #endif
             ResetState();
@@ -176,6 +182,7 @@ namespace UWBRanging
         static void RxErrorCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
+            Serial.printf("[RXERR] RX error @ %lld\n", esp_timer_get_time());
             PrintStatusState("RXERR");
 #endif
             ResetState();
@@ -184,15 +191,19 @@ namespace UWBRanging
         static void TxConfirmCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
+            Serial.printf("[TXCONF] TX confirmed @ %lld\n", esp_timer_get_time());
             PrintStatusState("TXCONF");
 #endif
 
             current_state = RESP_SENT;
 
-            dwt_forcetrxoff();
-            dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
-            dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
-            dwt_rxenable(DWT_START_RX_DELAYED);
+            int r = dwt_rxenable(DWT_START_RX_DELAYED);
+#if DEBUG_CALLBACKS
+            if (r != DWT_SUCCESS)
+            {
+                Serial.printf("[TXCONF] RX enable failed: %d @ %lld\n", r, esp_timer_get_time());
+            }
+#endif
         }
 
         QueueHandle_t Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority)

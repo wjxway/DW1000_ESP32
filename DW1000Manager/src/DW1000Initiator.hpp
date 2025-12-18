@@ -28,7 +28,7 @@ namespace UWBRanging
          * @return true if successful, false if failed
          * @note SPI bus (SPI2_HOST) must be initialized before calling this function
          */
-        bool Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority = 6, uint32_t ranging_priority = 1);
+        bool Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority = 6, uint32_t ranging_priority = 2);
 
         /**
          * @brief Start UWB TX/RX routine with specified interval
@@ -45,6 +45,9 @@ namespace UWBRanging
          * @brief Trigger a single ranging exchange
          * @return true if ranging was initiated successfully, false otherwise
          * @note Non-blocking, result is discarded (initiator only triggers)
+         * @note Currently blocking condition is auto-resolved by internal RangingTask after a while,
+         *      but there's no way to manually reset when internal error occurs. If really needed, you
+         *      can expose internal ResetState() function to reset the internal state machine.
          */
         bool TriggerRanging();
 

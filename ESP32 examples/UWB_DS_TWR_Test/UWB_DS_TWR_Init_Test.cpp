@@ -311,8 +311,6 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
 {
     rx_ok_count++;
 
-    decaIrqStatus_t stat = decamutexon();
-
     if (current_state != STATE_POLL_SENT)
     {
         reset_state_and_idle();
@@ -321,7 +319,6 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
 #endif
         print_status_state("RX_OK");
 
-        decamutexoff(stat);
         return;
     }
 
@@ -368,7 +365,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
 
 #endif
                 print_status_state("RX_OK");
-                decamutexoff(stat);
+
                 return;
             }
             else
@@ -378,7 +375,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
                 Serial.printf("[RX_OK] #%lu ERROR: Final TX failed (late): %d\n", rx_ok_count, ret);
 #endif
                 print_status_state("RX_OK");
-                decamutexoff(stat);
+
                 return;
             }
         }
@@ -389,7 +386,7 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
             Serial.printf("[RX_OK] #%lu Response frame validation FAILED\n", rx_ok_count);
 #endif
             print_status_state("RX_OK");
-            decamutexoff(stat);
+
             return;
         }
     }
@@ -400,7 +397,6 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
         Serial.printf("[RX_OK] #%lu Frame too long (%u > %d)\n", rx_ok_count, cb_data->datalength, RX_BUF_LEN);
 #endif
         print_status_state("RX_OK");
-        decamutexoff(stat);
     }
 }
 
@@ -417,13 +413,11 @@ static void rx_to_cb(const dwt_cb_data_t *cb_data)
 {
     rx_to_count++;
 
-    decaIrqStatus_t stat = decamutexon();
     reset_state_and_idle();
 #if DEBUG_CALLBACKS
     Serial.printf("[RX_TO] #%lu Timeout occurred\n", rx_to_count);
 #endif
     print_status_state("RX_TO");
-    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -439,13 +433,11 @@ static void rx_err_cb(const dwt_cb_data_t *cb_data)
 {
     rx_err_count++;
 
-    decaIrqStatus_t stat = decamutexon();
     reset_state_and_idle();
 #if DEBUG_CALLBACKS
     Serial.printf("[RX_ERR] #%lu Error occurred\n", rx_err_count);
 #endif
     print_status_state("RX_ERR");
-    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -460,8 +452,6 @@ static void rx_err_cb(const dwt_cb_data_t *cb_data)
 static void tx_conf_cb(const dwt_cb_data_t *cb_data)
 {
     tx_conf_count++;
-
-    decaIrqStatus_t stat = decamutexon();
 
     if (current_state == STATE_IDLE)
     {
@@ -501,8 +491,6 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data)
 #endif
 
     print_status_state("TX_CONF");
-
-    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------

@@ -180,6 +180,41 @@ constexpr uint16_t RESP_RX_TIMEOUT_UUS = 2000;
 constexpr uint8_t QUEUE_SIZE = 10;
 ```
 
+## Implementation Details
+
+### DS-TWR Protocol Flow
+
+The library implements the IEEE 802.15.4 Double-Sided Two-Way Ranging protocol with optimized timing control:
+
+**Initiator Flow:**
+1. **TriggerRanging()** sets timing parameters (`dwt_setrxaftertxdelay`, `dwt_setrxtimeout`) and sends POLL
+2. **TxConfirmCallback()** enables RX with `DWT_START_RX_DELAYED` (no `dwt_forcetrxoff`)
+3. **RxOkCallback()** receives RESPONSE, calculates FINAL timestamp, sends FINAL
+4. State returns to IDLE
+
+**Responder Flow:**
+1. **Begin()** enables continuous RX mode
+2. **RxOkCallback()** receives POLL, sets timing parameters, sends RESPONSE
+3. **TxConfirmCallback()** enables RX with `DWT_START_RX_DELAYED` (no `dwt_forcetrxoff`)
+4. **RxOkCallback()** receives FINAL, calculates distance, returns to RX mode
+
+### Key Optimizations
+
+Based on the official DS-TWR examples (UWB_DS_TWR_Test):
+
+1. **Timing Setup Location:**
+   - **Initiator**: `dwt_setrxaftertxdelay` and `dwt_setrxtimeout` set in `TriggerRanging()` before transmission
+   - **Responder**: `dwt_setrxaftertxdelay` and `dwt_setrxtimeout` set in `RxOkCallback()` before RESPONSE transmission
+
+2. **Removed Unnecessary `dwt_forcetrxoff` Calls:**
+   - TX confirmation callbacks no longer call `dwt_forcetrxoff` before enabling RX
+   - Only called once in Initiator's `TriggerRanging()` before starting new ranging exchange
+   - Reduces state transitions and improves reliability
+
+3. **Simplified State Management:**
+   - Callbacks focus on minimal state changes
+   - RX enabling uses `DWT_START_RX_DELAYED` to synchronize with hardware timing
+
 ## Debugging
 
 Enable debug output in `DW1000Manager.cpp`:
@@ -263,5 +298,6 @@ Built on DWM1000_ESP32 (DecaWave driver port). See component licenses.
 
 ---
 
-**Version**: 2.0  
-**Last Updated**: 2025-12-16
+**Version**: 2.1  
+**Last Updated**: 2025-12-17  
+**Changes**: Updated timing control and state management to match official DS-TWR examples

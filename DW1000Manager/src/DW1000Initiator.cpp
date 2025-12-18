@@ -18,7 +18,7 @@ namespace UWBRanging
     namespace Initiator
     {
         using namespace UWBRanging;
-        
+
         /* State variables */
         static bool initialized = false;
         static bool running = false;
@@ -34,8 +34,8 @@ namespace UWBRanging
         static uint64_t final_tx_ts;
 
         /* Delays and timeouts */
-        constexpr uint16_t POLL_TX_TO_RESP_RX_DLY_UUS = 1900;
-        constexpr uint16_t RESP_RX_TO_FINAL_TX_DLY_UUS = 2000;
+        constexpr uint16_t POLL_TX_TO_RESP_RX_DLY_UUS = 2000;
+        constexpr uint16_t RESP_RX_TO_FINAL_TX_DLY_UUS = 3000;
         constexpr uint16_t RESP_RX_TIMEOUT_UUS = 5000;
 
         /* State machine */
@@ -50,10 +50,12 @@ namespace UWBRanging
 
         static void ResetState()
         {
+            decaIrqStatus_t stat = decamutexon();
             current_state = IDLE;
             ranging_in_progress = false;
             dwt_setrxtimeout(0);
             dwt_forcetrxoff();
+            decamutexoff(stat);
         }
 
         /* Callback handlers */
@@ -61,8 +63,9 @@ namespace UWBRanging
         {
             if (current_state != POLL_SENT)
             {
+                ResetState();
 #if DEBUG_CALLBACKS
-                Serial.println("[RXOK] Unexpected state");
+                Serial.printf("[RXOK] Unexpected state @ %lld\n", esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
                 return;
@@ -70,11 +73,11 @@ namespace UWBRanging
 
             if (cb_data->datalength > RX_BUF_LEN)
             {
+                ResetState();
 #if DEBUG_CALLBACKS
-                Serial.println("[RXOK] Buffer overflow");
+                Serial.printf("[RXOK] Buffer overflow @ %lld\n", esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
-                ResetState();
                 return;
             }
 
@@ -83,11 +86,11 @@ namespace UWBRanging
 
             if (memcmp(rx_buffer, resp_msg, ALL_MSG_COMMON_LEN) != 0)
             {
+                ResetState();
 #if DEBUG_CALLBACKS
-                Serial.println("[RXOK] Invalid response");
+                Serial.printf("[RXOK] Invalid response @ %lld\n", esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
-                ResetState();
                 return;
             }
 
@@ -113,42 +116,40 @@ namespace UWBRanging
             {
                 frame_seq_nb++;
 #if DEBUG_CALLBACKS
-                Serial.printf("[RXOK] Response received, final sent (seq=%d)\n", frame_seq_nb - 1);
+                Serial.printf("[RXOK] Response received, final sent (seq=%d) @ %lld\n", frame_seq_nb - 1, esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
             }
             else
             {
+                ResetState();
 #if DEBUG_CALLBACKS
-                Serial.println("[RXOK] Final TX failed");
+                Serial.printf("[RXOK] Final TX failed @ %lld\n", esp_timer_get_time());
                 PrintStatusState("RXOK");
 #endif
-                ResetState();
             }
         }
 
         static void RxTimeoutCallback(const dwt_cb_data_t *cb_data)
         {
+            ResetState();
 #if DEBUG_CALLBACKS
+            Serial.printf("[RXTO] RX timeout @ %lld\n", esp_timer_get_time());
             PrintStatusState("RXTO");
 #endif
-            ResetState();
         }
 
         static void RxErrorCallback(const dwt_cb_data_t *cb_data)
         {
+            ResetState();
 #if DEBUG_CALLBACKS
+            Serial.printf("[RXERR] RX error @ %lld\n", esp_timer_get_time());
             PrintStatusState("RXERR");
 #endif
-            ResetState();
         }
 
         static void TxConfirmCallback(const dwt_cb_data_t *cb_data)
         {
-#if DEBUG_CALLBACKS
-            PrintStatusState("TXCONF");
-#endif
-
             if (current_state == IDLE)
             {
                 current_state = POLL_SENT;
@@ -158,34 +159,66 @@ namespace UWBRanging
                 current_state = IDLE;
             }
 
-            dwt_forcetrxoff();
-
+            // Only enable RX if we just sent a POLL frame
             if (current_state == POLL_SENT)
             {
-                dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-                dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
-                dwt_rxenable(DWT_START_RX_DELAYED);
+                if (dwt_rxenable(DWT_START_RX_DELAYED) != DWT_SUCCESS)
+                {
+#if DEBUG_CALLBACKS
+                    Serial.printf("[TXCONF] ERROR: dwt_rxenable failed @ %lld\n", esp_timer_get_time());
+#endif
+                }
+                else
+                {
+#if DEBUG_CALLBACKS
+                    Serial.printf("[TXCONF] RX enabled after POLL sent @ %lld\n", esp_timer_get_time());
+#endif
+                }
             }
             else
             {
                 ranging_in_progress = false;
+#if DEBUG_CALLBACKS
+                Serial.printf("[TXCONF] Final sent, ranging complete @ %lld\n", esp_timer_get_time());
+#endif
             }
+
+#if DEBUG_CALLBACKS
+            PrintStatusState("TXCONF");
+#endif
         }
 
         /* Ranging task for automatic polling */
         static void RangingTask(void *pvParameters)
         {
+            constexpr uint32_t num_failure_to_reset = 2;
+            uint32_t tx_failure_count = 0;
+
             while (running)
             {
-                if (ranging_interval_ms > 0)
+                if (TriggerRanging())
                 {
-                    TriggerRanging();
-                    vTaskDelay(pdMS_TO_TICKS(ranging_interval_ms));
+                    tx_failure_count = 0;
+                }
+                else if (tx_failure_count + 1 >= num_failure_to_reset)
+                {
+                    tx_failure_count = 0;
+#if DEBUG_CALLBACKS
+                    Serial.printf("[TRIG] TriggerRanging failed for %d times, resetting\n", num_failure_to_reset);
+                    PrintStatusState("TRIG");
+#endif
+                    ResetState();
+                    Serial.printf("[TRIG] TriggerRanging failed for %d times, resetting\n", num_failure_to_reset);
+#if DEBUG_CALLBACKS
+                    PrintStatusState("TRIG");
+#endif
                 }
                 else
                 {
-                    vTaskDelay(pdMS_TO_TICKS(100));
+                    tx_failure_count++;
                 }
+
+                vTaskDelay(pdMS_TO_TICKS(ranging_interval_ms));
             }
             ranging_task_handle = nullptr;
             vTaskDelete(nullptr);
@@ -260,6 +293,10 @@ namespace UWBRanging
 
         bool TriggerRanging()
         {
+#if DEBUG_CALLBACKS
+            Serial.printf("[TRIG] Ranging trigger started (seq=%d)\n", frame_seq_nb);
+#endif
+
             if (!initialized || ranging_in_progress)
                 return false;
 
@@ -267,22 +304,36 @@ namespace UWBRanging
             current_state = IDLE;
 
             decaIrqStatus_t stat = decamutexon();
+
+            // Force TRX off before starting new transmission
+            dwt_forcetrxoff();
+
             poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
             dwt_writetxdata(POLL_MSG_LEN, poll_msg, 0);
             dwt_writetxfctrl(POLL_MSG_LEN, 0, 1);
 
+            // Set expected delay and timeout for response message reception
+            dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+            dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+
+            // Start transmission with response expected
             int tx_ret = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+
             decamutexoff(stat);
 
-            if (tx_ret != DWT_SUCCESS)
+            if (tx_ret == DWT_SUCCESS)
             {
-                ranging_in_progress = false;
-                return false;
-            }
-
+                frame_seq_nb++;
 #if DEBUG_CALLBACKS
-            Serial.printf("[TRIG] Ranging triggered (seq=%d)\n", frame_seq_nb);
+                Serial.printf("[TRIG] Initiated ranging #%lu, sent POLL\n", frame_seq_nb + 1);
 #endif
+            }
+            else
+            {
+#if DEBUG_CALLBACKS
+                Serial.printf("[TRIG] ERROR: dwt_starttx failed: %d\n", tx_ret);
+#endif
+            }
 
             return true;
         }
@@ -295,7 +346,7 @@ namespace UWBRanging
             ranging_interval_ms = interval_ms;
             running = true;
 
-            xTaskCreate(RangingTask, "RangingTask", 2048, nullptr, ranging_task_priority, &ranging_task_handle);
+            xTaskCreate(RangingTask, "RangingTask", 4096, nullptr, ranging_task_priority, &ranging_task_handle);
 
 #if DEBUG_INITIALIZATION
             Serial.printf("[BEGIN] Started with interval %u ms\n", interval_ms);

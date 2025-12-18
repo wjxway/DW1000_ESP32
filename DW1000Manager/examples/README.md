@@ -457,8 +457,31 @@ Both examples demonstrate the simplified initialization process:
 
 The key change from previous versions is that **SPI bus initialization is now the user's responsibility**, allowing better integration with multi-device SPI systems. The library only configures the DW1000 device itself.
 
+## Implementation Notes
+
+### Updated Timing Control (v2.1)
+
+The library has been updated to match the official DS-TWR examples for improved reliability:
+
+**Initiator:**
+- Timing parameters (`dwt_setrxaftertxdelay`, `dwt_setrxtimeout`) are now set **before** sending POLL in `TriggerRanging()`
+- TX confirmation callback simplified: no `dwt_forcetrxoff`, just enables RX
+- Single `dwt_forcetrxoff` at the start of each ranging exchange
+
+**Responder:**
+- Timing parameters now set in **RxOkCallback** before sending RESPONSE (not in TX callback)
+- TX confirmation callback simplified: no `dwt_forcetrxoff`, just enables RX
+- Continuous RX mode maintained throughout operation
+
+**Benefits:**
+- Reduced state transitions
+- Better timing synchronization
+- Improved ranging success rate
+- Matches reference implementation behavior
+
 For complete API documentation, see [../README.md](../README.md).
 
 ---
 
-**Last Updated**: 2025-12-16
+**Last Updated**: 2025-12-17  
+**Version**: 2.1 - Updated timing control to match official DS-TWR examples
