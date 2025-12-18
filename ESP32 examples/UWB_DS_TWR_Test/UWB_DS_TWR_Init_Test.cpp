@@ -1,12 +1,12 @@
 /**
- * @file UWB_DS_TWR_Resp_Test.cpp
- * @brief Double-sided Two-Way Ranging (DS-TWR) Responder using interrupts for ESP32-S3
+ * @file UWB_DS_TWR_Init_Test.cpp
+ * @brief Double-sided Two-Way Ranging (DS-TWR) Initiator using interrupts for ESP32-S3
  *
- * This application acts as the responder in a DS-TWR distance measurement exchange.
- * It waits for a "poll" message from the initiator, sends a "response", then waits
- * for a "final" message containing all timestamps to compute the distance.
+ * This application acts as the initiator in a DS-TWR distance measurement exchange.
+ * It sends a "poll" frame, waits for a "response" from the responder, then sends a
+ * "final" message containing all timestamps. The responder calculates the distance.
  * All RX/TX events are handled through ISR callbacks.
- * Based on ex_05b_ds_twr_resp rewritten to use interrupt-driven operation.
+ * Based on ex_05a_ds_twr_init rewritten to use interrupt-driven operation.
  */
 
 #include <Arduino.h>
@@ -48,16 +48,16 @@ static dwt_config_t dw1000_config = {
 #define RX_ANT_DLY 16436
 
 /* Frames used in the ranging process.
- * Poll message: initiator -> responder (trigger ranging)
+ * Poll message:  initiator -> responder (trigger ranging)
  * Response message: responder -> initiator (continue ranging)
  * Final message: initiator -> responder (complete ranging with timestamps) */
-static uint8 rx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
-static uint8 tx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
-static uint8 rx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static uint8 tx_poll_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x21, 0, 0};
+static uint8 rx_resp_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'V', 'E', 'W', 'A', 0x10, 0x02, 0, 0, 0, 0};
+static uint8 tx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 /* Length of the common part of the message (up to and including the function code). */
 #define ALL_MSG_COMMON_LEN 10
-/* Index to access some of the fields in the frames involved in the process. */
+/* Indexes to access some of the fields in the frames defined above. */
 #define ALL_MSG_SN_IDX 2
 #define FINAL_MSG_POLL_TX_TS_IDX 10
 #define FINAL_MSG_RESP_RX_TS_IDX 14
@@ -67,8 +67,8 @@ static uint8 rx_final_msg[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'W', 'A', 'V', 'E', 0x
 /* Frame sequence number, incremented after each transmission. */
 static uint8 frame_seq_nb = 0;
 
-/* Buffer to store received messages. */
-#define RX_BUF_LEN 24
+/* Buffer to store received response message. */
+#define RX_BUF_LEN 20
 static uint8 rx_buffer[RX_BUF_LEN];
 
 /* UWB microsecond (uus) to device time unit (dtu, around 15.65 ps) conversion factor.
@@ -76,46 +76,32 @@ static uint8 rx_buffer[RX_BUF_LEN];
 #define UUS_TO_DWT_TIME 65536
 
 /* Delay between frames, in UWB microseconds. */
-/* This is the delay from Frame RX timestamp to TX reply timestamp. */
-#define POLL_RX_TO_RESP_TX_DLY_UUS 1000
 /* This is the delay from the end of the frame transmission to the enable of the receiver. */
-#define RESP_TX_TO_FINAL_RX_DLY_UUS 500
-/* Receive final timeout. */
-#define FINAL_RX_TIMEOUT_UUS 2000
+#define POLL_TX_TO_RESP_RX_DLY_UUS 500
+/* This is the delay from Frame RX timestamp to TX reply timestamp. */
+#define RESP_RX_TO_FINAL_TX_DLY_UUS 1000
+/* Receive response timeout. */
+#define RESP_RX_TIMEOUT_UUS 2000
 
-/* Timestamps of frames transmission/reception.
+/* Inter-ranging delay period, in milliseconds. */
+#define RNG_DELAY_MS 1000
+
+/* Time-stamps of frames transmission/reception, expressed in device time units.
  * As they are 40-bit wide, we need to define a 64-bit int type to handle them. */
-typedef signed long long int64;
 typedef unsigned long long uint64;
-static uint64 poll_rx_ts;
-static uint64 resp_tx_ts;
-static uint64 final_rx_ts;
+static uint64 poll_tx_ts;
+static uint64 resp_rx_ts;
+static uint64 final_tx_ts;
 
-/* Speed of light in air, in metres per second. */
-#define SPEED_OF_LIGHT 299702547
-
-/* Hold copies of computed time of flight and distance here. */
-static double tof;
-static double distance;
-
-/* State machine for DS-TWR responder */
+/* State machine for DS-TWR initiator */
 typedef enum
 {
-    STATE_WAITING_POLL,
-    STATE_POLL_RECEIVED,
-    STATE_RESP_SENT
-} ds_twr_resp_state_t;
+    STATE_IDLE,
+    STATE_POLL_SENT,
+    STATE_RESP_RECEIVED,
+} ds_twr_init_state_t;
 
-static volatile ds_twr_resp_state_t current_state = STATE_WAITING_POLL;
-
-/* reset state and go back to wait poll */
-static void reset_state_and_wait_poll()
-{
-    current_state = STATE_WAITING_POLL;
-    dwt_setrxtimeout(0);
-    dwt_forcetrxoff();
-    dwt_rxenable(DWT_START_RX_IMMEDIATE);
-}
+static volatile ds_twr_init_state_t current_state = STATE_IDLE;
 
 /* Callback statistics */
 static volatile uint32_t tx_conf_count = 0;
@@ -123,9 +109,8 @@ static volatile uint32_t rx_ok_count = 0;
 static volatile uint32_t rx_to_count = 0;
 static volatile uint32_t rx_err_count = 0;
 
-/* Ranging count and last distance */
+/* Ranging count */
 static volatile uint32_t ranging_count = 0;
-static volatile double last_distance = 0.0;
 
 /* Forward declarations of callback functions */
 static void rx_ok_cb(const dwt_cb_data_t *cb_data);
@@ -136,7 +121,7 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data);
 /* Forward declarations of helper functions */
 static uint64 get_tx_timestamp_u64(void);
 static uint64 get_rx_timestamp_u64(void);
-static void final_msg_get_ts(const uint8 *ts_field, uint32 *ts);
+static void final_msg_set_ts(uint8 *ts_field, uint64 ts);
 
 static void print_status_state(const char *prefix)
 {
@@ -155,6 +140,16 @@ static void print_status_state(const char *prefix)
 #endif
 }
 
+/* reset state and go back to idle state */
+static void reset_state_and_idle()
+{
+    decaIrqStatus_t stat = decamutexon();
+    current_state = STATE_IDLE;
+    dwt_setrxtimeout(0);
+    dwt_forcetrxoff();
+    decamutexoff(stat);
+}
+
 /**
  * @brief Arduino setup function
  */
@@ -168,7 +163,7 @@ void setup()
     Blink(500, 3, true, true, true);
 
     Serial.println("\n========================================");
-    Serial.println("   DS-TWR Responder Test (Interrupts)");
+    Serial.println("   DS-TWR Initiator Test (Interrupts)");
     Serial.println("========================================\n");
 
     /* Setup IMU CS pin to high (deselect IMU) */
@@ -228,6 +223,10 @@ void setup()
     dwt_settxantennadelay(TX_ANT_DLY);
     Serial.printf("Antenna delays set - RX: %u, TX: %u\n", RX_ANT_DLY, TX_ANT_DLY);
 
+    // dwt_setpreambledetecttimeout(PRE_TIMEOUT);
+    Serial.printf("RX after TX delay: %u uus, RX timeout: %u uus\n",
+                  POLL_TX_TO_RESP_RX_DLY_UUS, RESP_RX_TIMEOUT_UUS);
+
     /* Setup interrupt handling with callbacks */
     Serial.println("Setting up ISR with callbacks...");
     if (dw1000_setup_isr(6, &tx_conf_cb, &rx_ok_cb, &rx_to_cb, &rx_err_cb) != 0)
@@ -244,25 +243,59 @@ void setup()
 
     Serial.println("\n========================================");
     Serial.println("   Initialization Complete!");
-    Serial.println("   Starting DS-TWR Responder...");
+    Serial.println("   Starting DS-TWR Initiator loop...");
     Serial.println("========================================\n");
-
-    reset_state_and_wait_poll();
 
     // disable auto-bus acquisition to allow manual control of the SPI bus locks
 }
 
 /**
- * @brief Arduino loop function - monitors ranging status
+ * @brief Arduino loop function - initiates ranging exchanges periodically
  */
 void loop()
 {
-    /* Print status periodically */
-    Serial.printf("\n=== Stats: TX: %lu, RX OK: %lu, RX TO: %lu, RX Err: %lu | Ranging: %lu, Distance: %.3f m ===\n",
-                  tx_conf_count, rx_ok_count, rx_to_count, rx_err_count, ranging_count, last_distance);
+    /* Print callback statistics */
+    Serial.printf("\n=== Stats: TX: %lu, RX OK: %lu, RX TO: %lu, RX Err: %lu | Ranging: %lu ===\n",
+                  tx_conf_count, rx_ok_count, rx_to_count, rx_err_count, ranging_count);
     print_status_state("LOOP");
 
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    /* Reset state and start a new ranging exchange */
+    current_state = STATE_IDLE;
+
+    /* Write poll frame data to DW1000 and prepare transmission */
+    decaIrqStatus_t stat = decamutexon();
+
+    // refresh - force TRX off before starting new transmission
+    dwt_forcetrxoff();
+
+    tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+    dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
+    dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* ranging bit set */
+
+    /* Set expected delay and timeout for response message reception */
+    dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+    dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
+
+    /* Start transmission with response expected */
+    int tx_ret = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+    decamutexoff(stat);
+
+    if (tx_ret == DWT_SUCCESS)
+    {
+        frame_seq_nb++;
+#if DEBUG_CALLBACKS
+        Serial.printf("[LOOP] Initiated ranging #%lu, sent POLL\n", ranging_count + 1);
+#endif
+    }
+    else
+    {
+#if DEBUG_CALLBACKS
+        Serial.printf("[LOOP] ERROR: dwt_starttx failed: %d\n", tx_ret);
+#endif
+    }
+
+    /* Wait before next ranging exchange */
+    vTaskDelay(pdMS_TO_TICKS(RNG_DELAY_MS));
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -280,121 +313,94 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
 
     decaIrqStatus_t stat = decamutexon();
 
+    if (current_state != STATE_POLL_SENT)
+    {
+        reset_state_and_idle();
+#if DEBUG_CALLBACKS
+        Serial.printf("[RX_OK] #%lu Unexpected state %d, ignoring\n", rx_ok_count, current_state);
+#endif
+        print_status_state("RX_OK");
+
+        decamutexoff(stat);
+        return;
+    }
+
     /* A frame has been received, copy it to our local buffer */
     if (cb_data->datalength <= RX_BUF_LEN)
     {
         dwt_readrxdata(rx_buffer, cb_data->datalength, 0);
 
-        /* Clear sequence number for validation */
+        /* Check that the frame is the expected response from the responder.
+         * Clear sequence number for validation. */
         rx_buffer[ALL_MSG_SN_IDX] = 0;
-
-        /* Check what type of message we received based on current state */
-        if (current_state == STATE_WAITING_POLL && memcmp(rx_buffer, rx_poll_msg, ALL_MSG_COMMON_LEN) == 0)
+        if (memcmp(rx_buffer, rx_resp_msg, ALL_MSG_COMMON_LEN) == 0)
         {
-            /* Poll message received */
-            current_state = STATE_POLL_RECEIVED;
+            current_state = STATE_RESP_RECEIVED;
 
-            /* Retrieve poll reception timestamp */
-            poll_rx_ts = get_rx_timestamp_u64();
+            /* Retrieve poll transmission and response reception timestamp */
+            poll_tx_ts = get_tx_timestamp_u64();
+            resp_rx_ts = get_rx_timestamp_u64();
 
-            /* Set send time for response */
-            uint32 resp_tx_time = (poll_rx_ts + (POLL_RX_TO_RESP_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
-            dwt_setdelayedtrxtime(resp_tx_time);
+            /* Compute final message transmission time */
+            uint32 final_tx_time = (resp_rx_ts + (RESP_RX_TO_FINAL_TX_DLY_UUS * UUS_TO_DWT_TIME)) >> 8;
+            dwt_setdelayedtrxtime(final_tx_time);
 
-            /* Write and send the response message */
-            tx_resp_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
-            dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
-            dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1); /* ranging bit set */
+            /* Final TX timestamp is the transmission time we programmed plus the TX antenna delay */
+            final_tx_ts = (((uint64)(final_tx_time & 0xFFFFFFFEUL)) << 8) + TX_ANT_DLY;
 
-            /* Set expected delay and timeout for final message reception */
-            dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
-            dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
+            /* Write all timestamps in the final message */
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_POLL_TX_TS_IDX], poll_tx_ts);
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_RESP_RX_TS_IDX], resp_rx_ts);
+            final_msg_set_ts(&tx_final_msg[FINAL_MSG_FINAL_TX_TS_IDX], final_tx_ts);
 
-            int ret = dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
+            /* Write and send final message */
+            tx_final_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
+            dwt_writetxdata(sizeof(tx_final_msg), tx_final_msg, 0);
+            dwt_writetxfctrl(sizeof(tx_final_msg), 0, 1); /* ranging bit set */
+
+            int ret = dwt_starttx(DWT_START_TX_DELAYED);
 
             if (ret == DWT_SUCCESS)
             {
                 frame_seq_nb++;
-                decamutexoff(stat);
-                print_status_state("RX_OK");
 #if DEBUG_CALLBACKS
-                Serial.printf("[RX_OK] #%lu POLL received, RX ts: %llu, sending response\n", rx_ok_count, poll_rx_ts);
+                Serial.printf("[RX_OK] #%lu RESP received, RX ts: %llu, sending FINAL\n", rx_ok_count, resp_rx_ts);
+
 #endif
+                print_status_state("RX_OK");
+                decamutexoff(stat);
                 return;
             }
             else
             {
-                reset_state_and_wait_poll();
-                decamutexoff(stat);
-                print_status_state("RX_OK");
+                reset_state_and_idle();
 #if DEBUG_CALLBACKS
-                Serial.printf("[RX_OK] #%lu ERROR: Response TX failed (late): %d\n", rx_ok_count, ret);
+                Serial.printf("[RX_OK] #%lu ERROR: Final TX failed (late): %d\n", rx_ok_count, ret);
 #endif
+                print_status_state("RX_OK");
+                decamutexoff(stat);
                 return;
             }
         }
-        else if ((current_state == STATE_RESP_SENT) && memcmp(rx_buffer, rx_final_msg, ALL_MSG_COMMON_LEN) == 0)
-        {
-            /* Final message received */
-            uint32 poll_tx_ts_32, resp_rx_ts_32, final_tx_ts_32;
-            uint32 poll_rx_ts_32, resp_tx_ts_32, final_rx_ts_32;
-            double Ra, Rb, Da, Db;
-            int64 tof_dtu;
-
-            /* Retrieve response transmission and final reception timestamps */
-            resp_tx_ts = get_tx_timestamp_u64();
-            final_rx_ts = get_rx_timestamp_u64();
-
-            /* Get timestamps embedded in the final message */
-            final_msg_get_ts(&rx_buffer[FINAL_MSG_POLL_TX_TS_IDX], &poll_tx_ts_32);
-            final_msg_get_ts(&rx_buffer[FINAL_MSG_RESP_RX_TS_IDX], &resp_rx_ts_32);
-            final_msg_get_ts(&rx_buffer[FINAL_MSG_FINAL_TX_TS_IDX], &final_tx_ts_32);
-
-            /* Compute time of flight using 32-bit subtractions (handles clock wrap) */
-            poll_rx_ts_32 = (uint32)poll_rx_ts;
-            resp_tx_ts_32 = (uint32)resp_tx_ts;
-            final_rx_ts_32 = (uint32)final_rx_ts;
-
-            Ra = (double)(resp_rx_ts_32 - poll_tx_ts_32);
-            Rb = (double)(final_rx_ts_32 - resp_tx_ts_32);
-            Da = (double)(final_tx_ts_32 - resp_rx_ts_32);
-            Db = (double)(resp_tx_ts_32 - poll_rx_ts_32);
-
-            tof_dtu = (int64)((Ra * Rb - Da * Db) / (Ra + Rb + Da + Db));
-
-            tof = tof_dtu * DWT_TIME_UNITS;
-            distance = tof * SPEED_OF_LIGHT;
-            last_distance = distance;
-            ranging_count++;
-
-            /* Re-enable reception for next poll */
-            reset_state_and_wait_poll();
-            decamutexoff(stat);
-            print_status_state("RX_OK");
-#if DEBUG_CALLBACKS
-            Serial.printf("[RX_OK] #%lu FINAL received, distance: %.3f m (ToF: %.3f ns)\n", rx_ok_count, distance, tof * 1e9);
-#endif
-            return;
-        }
         else
         {
-            reset_state_and_wait_poll();
-            decamutexoff(stat);
-            print_status_state("RX_OK");
+            reset_state_and_idle();
 #if DEBUG_CALLBACKS
-            Serial.printf("[RX_OK] #%lu Unexpected frame in state %d, restarting\n", rx_ok_count, current_state);
+            Serial.printf("[RX_OK] #%lu Response frame validation FAILED\n", rx_ok_count);
 #endif
+            print_status_state("RX_OK");
+            decamutexoff(stat);
             return;
         }
     }
     else
     {
-        reset_state_and_wait_poll();
-        decamutexoff(stat);
-        print_status_state("RX_OK");
+        reset_state_and_idle();
 #if DEBUG_CALLBACKS
         Serial.printf("[RX_OK] #%lu Frame too long (%u > %d)\n", rx_ok_count, cb_data->datalength, RX_BUF_LEN);
 #endif
+        print_status_state("RX_OK");
+        decamutexoff(stat);
     }
 }
 
@@ -412,13 +418,12 @@ static void rx_to_cb(const dwt_cb_data_t *cb_data)
     rx_to_count++;
 
     decaIrqStatus_t stat = decamutexon();
-    reset_state_and_wait_poll();
-    decamutexoff(stat);
-
-    print_status_state("RX_TO");
+    reset_state_and_idle();
 #if DEBUG_CALLBACKS
     Serial.printf("[RX_TO] #%lu Timeout occurred\n", rx_to_count);
 #endif
+    print_status_state("RX_TO");
+    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -435,13 +440,12 @@ static void rx_err_cb(const dwt_cb_data_t *cb_data)
     rx_err_count++;
 
     decaIrqStatus_t stat = decamutexon();
-    reset_state_and_wait_poll();
-    decamutexoff(stat);
-
-    print_status_state("RX_ERR");
+    reset_state_and_idle();
 #if DEBUG_CALLBACKS
     Serial.printf("[RX_ERR] #%lu Error occurred\n", rx_err_count);
 #endif
+    print_status_state("RX_ERR");
+    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -456,24 +460,49 @@ static void rx_err_cb(const dwt_cb_data_t *cb_data)
 static void tx_conf_cb(const dwt_cb_data_t *cb_data)
 {
     tx_conf_count++;
-    current_state = STATE_RESP_SENT;
 
     decaIrqStatus_t stat = decamutexon();
-    int r = dwt_rxenable(DWT_START_RX_DELAYED);
-    if (r != DWT_SUCCESS)
+
+    if (current_state == STATE_IDLE)
     {
-        Serial.printf("[TX_CONF] ERROR: dwt_rxenable failed: %d\n", r);
+        current_state = STATE_POLL_SENT;
     }
     else
     {
-        Serial.printf("[TX_CONF] RX enabled after POLL sent\n");
+        current_state = STATE_IDLE;
     }
-    decamutexoff(stat);
+
+    // only enable RX if we just sent a POLL frame
+    if (current_state == STATE_POLL_SENT)
+    {
+        if (dwt_rxenable(DWT_START_RX_DELAYED) != DWT_SUCCESS)
+        {
+#if DEBUG_CALLBACKS
+            Serial.println("[TX_CONF] ERROR: dwt_rxenable failed");
+#endif
+        }
+        else
+        {
+#if DEBUG_CALLBACKS
+            Serial.println("[TX_CONF] RX enabled after POLL sent");
+#endif
+        }
+    }
+
+#if DEBUG_CALLBACKS
+    if (current_state == STATE_RESP_RECEIVED)
+    {
+        Serial.printf("[TX_CONF] #%lu FINAL sent, ranging #%lu complete\n", tx_conf_count, ranging_count);
+    }
+    else
+    {
+        Serial.printf("[TX_CONF] #%lu TX complete\n", tx_conf_count);
+    }
+#endif
 
     print_status_state("TX_CONF");
-#if DEBUG_CALLBACKS
-    Serial.printf("[TX_CONF] #%lu Response sent, waiting for final message\n", tx_conf_count);
-#endif
+
+    decamutexoff(stat);
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
@@ -521,21 +550,21 @@ static uint64 get_rx_timestamp_u64(void)
 }
 
 /*! ------------------------------------------------------------------------------------------------------------------
- * @fn final_msg_get_ts()
+ * @fn final_msg_set_ts()
  *
- * @brief Read a given timestamp value from the final message.
+ * @brief Fill a given timestamp field in the final message with the given value.
  *        In the timestamp fields of the final message, the least significant byte is at the lower address.
  *
- * @param  ts_field  pointer on the first byte of the timestamp field to read
+ * @param  ts_field  pointer on the first byte of the timestamp field to fill
  *         ts  timestamp value
  *
  * @return none
  */
-static void final_msg_get_ts(const uint8 *ts_field, uint32 *ts)
+static void final_msg_set_ts(uint8 *ts_field, uint64 ts)
 {
-    *ts = 0;
     for (int i = 0; i < FINAL_MSG_TS_LEN; i++)
     {
-        *ts += ts_field[i] << (i * 8);
+        ts_field[i] = (uint8)ts;
+        ts >>= 8;
     }
 }
