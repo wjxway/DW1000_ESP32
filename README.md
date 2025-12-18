@@ -31,7 +31,6 @@ Application Code
 │   - deca_spi.c/h                     │     (SPI interface)
 │   - deca_gpio.c/h                    │     (GPIO & interrupts)
 │   - deca_sleep.c                     │     (Delay functions)
-│   - deca_mutex.c                     │     (Synchronization)
 │   - deca_debug.c/h                   │     (Debug utilities)
 └──────────────────────────────────────┘
        ↓
@@ -518,7 +517,7 @@ void deca_usleep(unsigned long time_us); // Microsecond delay
 
 Uses FreeRTOS `vTaskDelay()` for ms delays and `esp_rom_delay_us()` for µs delays.
 
-### Mutex Functions (deca_mutex.c)
+### Mutex Functions (deca_spi.c)
 
 FreeRTOS mutex wrappers (if needed by driver):
 

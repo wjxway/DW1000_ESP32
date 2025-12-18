@@ -79,7 +79,7 @@ static uint8 rx_buffer[RX_BUF_LEN];
 /* This is the delay from Frame RX timestamp to TX reply timestamp. */
 #define POLL_RX_TO_RESP_TX_DLY_UUS 1000
 /* This is the delay from the end of the frame transmission to the enable of the receiver. */
-#define RESP_TX_TO_FINAL_RX_DLY_UUS 900
+#define RESP_TX_TO_FINAL_RX_DLY_UUS 500
 /* Receive final timeout. */
 #define FINAL_RX_TIMEOUT_UUS 2000
 
@@ -250,7 +250,7 @@ void setup()
     reset_state_and_wait_poll();
 
     // disable auto-bus acquisition to allow manual control of the SPI bus locks
-    }
+}
 
 /**
  * @brief Arduino loop function - monitors ranging status
@@ -305,6 +305,10 @@ static void rx_ok_cb(const dwt_cb_data_t *cb_data)
             tx_resp_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
             dwt_writetxdata(sizeof(tx_resp_msg), tx_resp_msg, 0);
             dwt_writetxfctrl(sizeof(tx_resp_msg), 0, 1); /* ranging bit set */
+
+            /* Set expected delay and timeout for final message reception */
+            dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
+            dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
 
             int ret = dwt_starttx(DWT_START_TX_DELAYED | DWT_RESPONSE_EXPECTED);
 
@@ -455,11 +459,15 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data)
     current_state = STATE_RESP_SENT;
 
     decaIrqStatus_t stat = decamutexon();
-    dwt_forcetrxoff();
-    /* Set expected delay and timeout for final message reception */
-    dwt_setrxaftertxdelay(RESP_TX_TO_FINAL_RX_DLY_UUS);
-    dwt_setrxtimeout(FINAL_RX_TIMEOUT_UUS);
-    dwt_rxenable(DWT_START_RX_DELAYED);
+    int r = dwt_rxenable(DWT_START_RX_DELAYED);
+    if (r != DWT_SUCCESS)
+    {
+        Serial.printf("[TX_CONF] ERROR: dwt_rxenable failed: %d\n", r);
+    }
+    else
+    {
+        Serial.printf("[TX_CONF] RX enabled after POLL sent\n");
+    }
     decamutexoff(stat);
 
     print_status_state("TX_CONF");

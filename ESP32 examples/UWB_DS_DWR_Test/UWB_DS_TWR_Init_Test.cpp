@@ -77,7 +77,7 @@ static uint8 rx_buffer[RX_BUF_LEN];
 
 /* Delay between frames, in UWB microseconds. */
 /* This is the delay from the end of the frame transmission to the enable of the receiver. */
-#define POLL_TX_TO_RESP_RX_DLY_UUS 900
+#define POLL_TX_TO_RESP_RX_DLY_UUS 500
 /* This is the delay from Frame RX timestamp to TX reply timestamp. */
 #define RESP_RX_TO_FINAL_TX_DLY_UUS 1000
 /* Receive response timeout. */
@@ -245,7 +245,7 @@ void setup()
     Serial.println("========================================\n");
 
     // disable auto-bus acquisition to allow manual control of the SPI bus locks
-    }
+}
 
 /**
  * @brief Arduino loop function - initiates ranging exchanges periodically
@@ -262,9 +262,17 @@ void loop()
 
     /* Write poll frame data to DW1000 and prepare transmission */
     decaIrqStatus_t stat = decamutexon();
+    
+    // refresh - force TRX off before starting new transmission
+    dwt_forcetrxoff();
+
     tx_poll_msg[ALL_MSG_SN_IDX] = frame_seq_nb;
     dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);
     dwt_writetxfctrl(sizeof(tx_poll_msg), 0, 1); /* ranging bit set */
+
+    /* Set expected delay and timeout for response message reception */
+    dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
+    dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
 
     /* Start transmission with response expected */
     int tx_ret = dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
@@ -459,13 +467,19 @@ static void tx_conf_cb(const dwt_cb_data_t *cb_data)
     }
 
     decaIrqStatus_t stat = decamutexon();
-    dwt_forcetrxoff();
+    // dwt_forcetrxoff();
     // only enable RX if we just sent a POLL frame
     if (current_state == STATE_POLL_SENT)
     {
-        dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
-        dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
-        dwt_rxenable(DWT_START_RX_DELAYED);
+        int r = dwt_rxenable(DWT_START_RX_DELAYED);
+        if (r != DWT_SUCCESS)
+        {
+            Serial.printf("[TX_CONF] ERROR: dwt_rxenable failed: %d\n", r);
+        }
+        else
+        {
+            Serial.printf("[TX_CONF] RX enabled after POLL sent\n");
+        }
     }
     decamutexoff(stat);
 
