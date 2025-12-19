@@ -159,7 +159,7 @@ int dw1000_setup_isr(uint32_t task_priority,
     ESP_LOGI(TAG, "DW1000 IRQ task created with priority %lu", task_priority);
 
     /* Install GPIO ISR service if not already installed */
-    esp_err_t isr_ret = gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1);
+    esp_err_t isr_ret = gpio_install_isr_service(ESP_INTR_FLAG_LEVEL1 | ESP_INTR_FLAG_IRAM);
     if (isr_ret != ESP_OK && isr_ret != ESP_ERR_INVALID_STATE)
     {
         ESP_LOGE(TAG, "Failed to install GPIO ISR service: %s", esp_err_to_name(isr_ret));

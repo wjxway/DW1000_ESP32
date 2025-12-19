@@ -239,6 +239,9 @@ int writetospi(uint16 headerLength, const uint8 *headerBuffer, uint32 bodylength
     /* Assert CS */
     gpio_set_level(cs_pin, 0);
 
+    // clear spi_tx_buffer
+    memset(spi_tx_buffer, 0, headerLength + bodylength);
+
     /* Prepare TX buffer */
     memcpy(spi_tx_buffer, headerBuffer, headerLength);
     if (bodylength > 0 && bodyBuffer != NULL)
@@ -299,6 +302,9 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlengt
     /* Assert CS */
     gpio_set_level(cs_pin, 0);
 
+    // clear spi_tx_buffer
+    memset(spi_tx_buffer, 0, headerLength + readlength);
+
     /* Prepare TX buffer with header */
     memcpy(spi_tx_buffer, headerBuffer, headerLength);
 
@@ -342,8 +348,8 @@ int readfromspi(uint16 headerLength, const uint8 *headerBuffer, uint32 readlengt
  * output parameters
  *
  * returns the state of the DW1000 interrupt
- * 
- * @note Added acquisition of SPI bus in critical section 
+ *
+ * @note Added acquisition of SPI bus in critical section
  */
 decaIrqStatus_t decamutexon(void)
 {
@@ -351,8 +357,14 @@ decaIrqStatus_t decamutexon(void)
 
     if (s)
     {
-        dw1000_gpio_disable_irq();
         spi_device_acquire_bus(dw1000_spi_handle, portMAX_DELAY);
+        dw1000_gpio_disable_irq();
+        // Add a idle read here to allow SPI to switch to the right mode.
+        // for ESP32, mode switching occurs at the start of transaction
+        // and this moment will be later than CS pulling low.
+        // Thus the first reading will be invalid.
+        // add this to ensure that the next useful spi reading is valid.
+        dwt_read32bitreg(SYS_STATUS_ID);
     }
     return s;
 }
@@ -371,7 +383,7 @@ decaIrqStatus_t decamutexon(void)
  * output parameters
  *
  * returns the state of the DW1000 interrupt
- * 
+ *
  * @note Added release of SPI bus after critical section
  */
 void decamutexoff(decaIrqStatus_t s)

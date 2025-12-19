@@ -18,7 +18,7 @@ namespace UWBRanging
     namespace Responder
     {
         using namespace UWBRanging;
-        
+
         /* State variables */
         static bool initialized = false;
         static bool running = false;
@@ -173,7 +173,7 @@ namespace UWBRanging
         static void RxTimeoutCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
-            Serial.printf("[RXTO] RX timeout @ %lld\n", esp_timer_get_time());
+            Serial.printf("[RXTO] RX timeout : 0x%08X @ %lld\n", cb_data->status, esp_timer_get_time());
             PrintStatusState("RXTO");
 #endif
             ResetState();
@@ -182,7 +182,7 @@ namespace UWBRanging
         static void RxErrorCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
-            Serial.printf("[RXERR] RX error @ %lld\n", esp_timer_get_time());
+            Serial.printf("[RXERR] RX error : 0x%08X @ %lld\n", cb_data->status, esp_timer_get_time());
             PrintStatusState("RXERR");
 #endif
             ResetState();
@@ -191,7 +191,7 @@ namespace UWBRanging
         static void TxConfirmCallback(const dwt_cb_data_t *cb_data)
         {
 #if DEBUG_CALLBACKS
-            Serial.printf("[TXCONF] TX confirmed @ %lld\n", esp_timer_get_time());
+            Serial.printf("[TXCONF] TX confirmed : 0x%08X @ %lld\n", cb_data->status, esp_timer_get_time());
             PrintStatusState("TXCONF");
 #endif
 
@@ -201,19 +201,27 @@ namespace UWBRanging
 #if DEBUG_CALLBACKS
             if (r != DWT_SUCCESS)
             {
-                Serial.printf("[TXCONF] RX enable failed: %d @ %lld\n", r, esp_timer_get_time());
+                Serial.printf("[TXCONF] RX enable failed: 0x%08X @ %lld\n", cb_data->status, esp_timer_get_time());
             }
 #endif
         }
 
         QueueHandle_t Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority)
         {
+            decaIrqStatus_t stat = decamutexon();
+
             if (initialized)
+            {
+                decamutexoff(stat);
                 return result_queue;
+            }
 
             result_queue = xQueueCreate(QUEUE_SIZE, sizeof(RangingResult));
             if (result_queue == nullptr)
+            {
+                decamutexoff(stat);
                 return nullptr;
+            }
 
 #if DEBUG_INITIALIZATION
             Serial.println("[INIT] Initializing UWB Responder");
@@ -227,6 +235,7 @@ namespace UWBRanging
 #endif
                 vQueueDelete(result_queue);
                 result_queue = nullptr;
+                decamutexoff(stat);
                 return nullptr;
             }
 
@@ -237,14 +246,34 @@ namespace UWBRanging
 #endif
                 vQueueDelete(result_queue);
                 result_queue = nullptr;
+                decamutexoff(stat);
                 return nullptr;
             }
 
             dw1000_hard_reset();
-            dw1000_spi_fix_bug();
-            vTaskDelay(pdMS_TO_TICKS(2));
-            dw1000_spi_fix_bug();
-            vTaskDelay(pdMS_TO_TICKS(2));
+            constexpr int MAX_TRIES = 10;
+            constexpr uint32_t correct_devid = 0xDECA0130;
+            int tries = 0;
+            while (++tries <= MAX_TRIES)
+            {
+                if (dwt_readdevid() == correct_devid)
+                {
+                    break;
+                }
+                dw1000_spi_fix_bug();
+                delayMicroseconds(10);
+            }
+
+            if (dwt_readdevid() != correct_devid)
+            {
+#if DEBUG_INITIALIZATION
+                Serial.println("[INIT] ERROR: Device ID read failed");
+#endif
+                vQueueDelete(result_queue);
+                result_queue = nullptr;
+                decamutexoff(stat);
+                return nullptr;
+            }
 
             if (dwt_initialise(DWT_LOADUCODE) == DWT_ERROR)
             {
@@ -253,6 +282,7 @@ namespace UWBRanging
 #endif
                 vQueueDelete(result_queue);
                 result_queue = nullptr;
+                decamutexoff(stat);
                 return nullptr;
             }
 
@@ -269,6 +299,7 @@ namespace UWBRanging
 #endif
                 vQueueDelete(result_queue);
                 result_queue = nullptr;
+                decamutexoff(stat);
                 return nullptr;
             }
 
@@ -281,6 +312,8 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
             Serial.println("[INIT] UWB Responder initialized successfully");
 #endif
+
+            decamutexoff(stat);
 
             return result_queue;
         }

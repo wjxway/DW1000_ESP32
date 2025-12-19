@@ -81,17 +81,22 @@ namespace UWBRanging
 
     void PrintStatusState(const char *prefix)
     {
+#if DEBUG_STATUS_STATE
         sys_status_reg_t status;
         sys_state_reg_t state;
         char status_buf[512], state_buf[512];
 
+        decaIrqStatus_t stat = decamutexon();
         deca_get_sys_status(&status);
         deca_get_sys_state(&state);
+        decamutexoff(stat);
+        
         deca_get_status_string(&status, status_buf, sizeof(status_buf));
         deca_get_state_string(&state, state_buf, sizeof(state_buf));
 
         Serial.printf("[%s] Status: 0x%02X %08X %s\n", prefix, status.status_high, status.status_low, status_buf);
         Serial.printf("[%s] State: %s\n", prefix, state_buf);
+#endif
     }
 
 } // namespace UWBRanging

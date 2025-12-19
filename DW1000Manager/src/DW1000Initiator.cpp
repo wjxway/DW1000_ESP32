@@ -208,10 +208,6 @@ namespace UWBRanging
                     PrintStatusState("TRIG");
 #endif
                     ResetState();
-                    Serial.printf("[TRIG] TriggerRanging failed for %d times, resetting\n", num_failure_to_reset);
-#if DEBUG_CALLBACKS
-                    PrintStatusState("TRIG");
-#endif
                 }
                 else
                 {
@@ -226,8 +222,13 @@ namespace UWBRanging
 
         bool Initialize(uint8_t cs_pin, uint8_t int_pin, uint8_t rst_pin, uint32_t callback_priority, uint32_t ranging_priority)
         {
+            decaIrqStatus_t stat = decamutexon();
+
             if (initialized)
+            {
+                decamutexoff(stat);
                 return true;
+            }
 
             ranging_task_priority = ranging_priority;
 
@@ -241,6 +242,7 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
                 Serial.println("[INIT] ERROR: SPI init failed");
 #endif
+                decamutexoff(stat);
                 return false;
             }
 
@@ -249,18 +251,39 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
                 Serial.println("[INIT] ERROR: GPIO init failed");
 #endif
+                decamutexoff(stat);
                 return false;
             }
 
             dw1000_hard_reset();
-            dw1000_spi_fix_bug();
-            vTaskDelay(pdMS_TO_TICKS(5));
+            constexpr int MAX_TRIES = 10;
+            constexpr uint32_t correct_devid = 0xDECA0130;
+            int tries = 0;
+            while (++tries <= MAX_TRIES)
+            {
+                if (dwt_readdevid() == correct_devid)
+                {
+                    break;
+                }
+                dw1000_spi_fix_bug();
+                delayMicroseconds(10);
+            }
+
+            if (dwt_readdevid() != correct_devid)
+            {
+#if DEBUG_INITIALIZATION
+                Serial.println("[INIT] ERROR: Device ID read failed");
+#endif
+                decamutexoff(stat);
+                return false;
+            }
 
             if (dwt_initialise(DWT_LOADUCODE) == DWT_ERROR)
             {
 #if DEBUG_INITIALIZATION
                 Serial.println("[INIT] ERROR: dwt_initialise failed");
 #endif
+                decamutexoff(stat);
                 return false;
             }
 
@@ -275,6 +298,7 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
                 Serial.println("[INIT] ERROR: ISR setup failed");
 #endif
+                decamutexoff(stat);
                 return false;
             }
 
@@ -287,6 +311,8 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
             Serial.println("[INIT] UWB Initiator initialized successfully");
 #endif
+
+            decamutexoff(stat);
 
             return true;
         }
