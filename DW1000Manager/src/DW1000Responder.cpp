@@ -210,44 +210,47 @@ namespace UWBRanging
         {
             decaIrqStatus_t stat = decamutexon();
 
-            if (initialized)
+            // when already initialized, only execute reset routine
+            if (!initialized)
             {
-                decamutexoff(stat);
-                return result_queue;
-            }
-
-            result_queue = xQueueCreate(QUEUE_SIZE, sizeof(RangingResult));
-            if (result_queue == nullptr)
-            {
-                decamutexoff(stat);
-                return nullptr;
-            }
+                result_queue = xQueueCreate(QUEUE_SIZE, sizeof(RangingResult));
+                if (result_queue == nullptr)
+                {
+                    decamutexoff(stat);
+                    return nullptr;
+                }
 
 #if DEBUG_INITIALIZATION
-            Serial.println("[INIT] Initializing UWB Responder");
+                Serial.println("[INIT] Initializing UWB Responder");
 #endif
 
-            /* Initialize DW1000 SPI device */
-            if (dw1000_spi_init(UWB_SPI_HOST, (gpio_num_t)cs_pin, nullptr) != 0)
-            {
+                /* Initialize DW1000 SPI device */
+                if (dw1000_spi_init(UWB_SPI_HOST, (gpio_num_t)cs_pin, nullptr) != 0)
+                {
 #if DEBUG_INITIALIZATION
-                Serial.println("[INIT] ERROR: SPI init failed");
+                    Serial.println("[INIT] ERROR: SPI init failed");
 #endif
-                vQueueDelete(result_queue);
-                result_queue = nullptr;
-                decamutexoff(stat);
-                return nullptr;
+                    vQueueDelete(result_queue);
+                    result_queue = nullptr;
+                    decamutexoff(stat);
+                    return nullptr;
+                }
+
+                if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
+                {
+#if DEBUG_INITIALIZATION
+                    Serial.println("[INIT] ERROR: GPIO init failed");
+#endif
+                    vQueueDelete(result_queue);
+                    result_queue = nullptr;
+                    decamutexoff(stat);
+                    return nullptr;
+                }
             }
-
-            if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
+            else
             {
-#if DEBUG_INITIALIZATION
-                Serial.println("[INIT] ERROR: GPIO init failed");
-#endif
-                vQueueDelete(result_queue);
-                result_queue = nullptr;
-                decamutexoff(stat);
-                return nullptr;
+                // disable isr first
+                dw1000_unregister_isr();
             }
 
             dw1000_hard_reset();
@@ -288,6 +291,8 @@ namespace UWBRanging
 
             spi_set_rate_high();
 
+            delayMicroseconds(100);
+
             dwt_configure(&dw1000_config);
             dwt_setrxantennadelay(RX_ANT_DLY);
             dwt_settxantennadelay(TX_ANT_DLY);
@@ -303,15 +308,27 @@ namespace UWBRanging
                 return nullptr;
             }
 
+            Serial.println("[INIT] DW1000 ISR initialized");
+
+            Serial.printf("[INIT] devid 0x%08X\n", dwt_readdevid());
+            Serial.printf("[INIT] devid 0x%08X\n", dwt_readdevid());
+
+            dwt_write32bitreg(SYS_MASK_ID, DWT_INT_TFRS | DWT_INT_RFCG | DWT_INT_RPHE | DWT_INT_RFCE |
+                                               DWT_INT_RFSL | DWT_INT_RFTO | DWT_INT_RXOVRR | DWT_INT_RXPTO | DWT_INT_SFDT); // New value
+
+            Serial.println("[INIT] DW1000 write done");
+
             dwt_setinterrupt(DWT_INT_TFRS | DWT_INT_RFCG | DWT_INT_RPHE | DWT_INT_RFCE |
                                  DWT_INT_RFSL | DWT_INT_RFTO | DWT_INT_RXOVRR | DWT_INT_RXPTO | DWT_INT_SFDT,
-                             1);
+                             2);
 
             initialized = true;
 
 #if DEBUG_INITIALIZATION
             Serial.println("[INIT] UWB Responder initialized successfully");
 #endif
+
+            dwt_forcetrxoff();
 
             decamutexoff(stat);
 

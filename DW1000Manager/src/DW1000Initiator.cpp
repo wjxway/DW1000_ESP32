@@ -224,35 +224,32 @@ namespace UWBRanging
         {
             decaIrqStatus_t stat = decamutexon();
 
-            if (initialized)
+            if (!initialized)
             {
-                decamutexoff(stat);
-                return true;
-            }
-
-            ranging_task_priority = ranging_priority;
+                ranging_task_priority = ranging_priority;
 
 #if DEBUG_INITIALIZATION
-            Serial.println("[INIT] Initializing UWB Initiator");
+                Serial.println("[INIT] Initializing UWB Initiator");
 #endif
 
-            /* Initialize DW1000 SPI device */
-            if (dw1000_spi_init(UWB_SPI_HOST, (gpio_num_t)cs_pin, nullptr) != 0)
-            {
+                /* Initialize DW1000 SPI device */
+                if (dw1000_spi_init(UWB_SPI_HOST, (gpio_num_t)cs_pin, nullptr) != 0)
+                {
 #if DEBUG_INITIALIZATION
-                Serial.println("[INIT] ERROR: SPI init failed");
+                    Serial.println("[INIT] ERROR: SPI init failed");
 #endif
-                decamutexoff(stat);
-                return false;
-            }
+                    decamutexoff(stat);
+                    return false;
+                }
 
-            if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
-            {
+                if (dw1000_gpio_init((gpio_num_t)rst_pin, (gpio_num_t)int_pin, GPIO_NUM_NC) != 0)
+                {
 #if DEBUG_INITIALIZATION
-                Serial.println("[INIT] ERROR: GPIO init failed");
+                    Serial.println("[INIT] ERROR: GPIO init failed");
 #endif
-                decamutexoff(stat);
-                return false;
+                    decamutexoff(stat);
+                    return false;
+                }
             }
 
             dw1000_hard_reset();
@@ -311,6 +308,8 @@ namespace UWBRanging
 #if DEBUG_INITIALIZATION
             Serial.println("[INIT] UWB Initiator initialized successfully");
 #endif
+
+            dwt_forcetrxoff();
 
             decamutexoff(stat);
 

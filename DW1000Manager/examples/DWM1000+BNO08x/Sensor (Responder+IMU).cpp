@@ -73,6 +73,7 @@ Statistics CalculateStatistics(const std::vector<double> &distances, uint32_t ti
 
 void setup()
 {
+    // Set high priority for setup
     vTaskPrioritySet(NULL, 10);
 
     Serial.begin(115200);
@@ -108,16 +109,6 @@ void setup()
         }
     }
 
-    // Initialize the IMU hardware
-    if (!IMUManager::Initialize(IMU_CS_PIN, IMU_INTN_PIN, IMU_RST_PIN, 10, 6))
-    {
-        Serial.println("ERROR: Failed to initialize IMU!");
-        while (1)
-        {
-            vTaskDelay(1000);
-        }
-    }
-
     // Initialize the UWB hardware
     ranging_queue = UWBRanging::Responder::Initialize(UWB_CS_PIN, UWB_IRQ_PIN, UWB_RST_PIN, 7);
 
@@ -131,6 +122,17 @@ void setup()
     }
 
     Serial.println("UWB Responder initialized successfully");
+
+    
+    // Initialize the IMU hardware
+    if (!IMUManager::Initialize(IMU_CS_PIN, IMU_INTN_PIN, IMU_RST_PIN, 10, 6))
+    {
+        Serial.println("ERROR: Failed to initialize IMU!");
+        while (1)
+        {
+            vTaskDelay(1000);
+        }
+    }
 
     // Start receiving
     UWBRanging::Responder::Begin();
@@ -163,6 +165,9 @@ void loop()
     {
         uint32_t time_window = current_time - last_print_time;
 
+        digitalWrite(LED_B_PIN, HIGH); // Blue (UWB) OFF
+        digitalWrite(LED_R_PIN, HIGH); // Red (IMU) OFF
+
         if (!distances.empty())
         {
             // Calculate and print statistics
@@ -176,6 +181,10 @@ void loop()
 
             // Clear distances for next window
             distances.clear();
+
+            // Check if readings are stable
+            if (stats.update_rate_hz >= 5.0f)
+                digitalWrite(LED_B_PIN, LOW); // Blue ON
         }
         else
         {
@@ -210,6 +219,10 @@ void loop()
                               imu_data.quaternion.w, imu_data.quaternion.x, imu_data.quaternion.y, imu_data.quaternion.z, quat_rate,
                               imu_data.acceleration.x, imu_data.acceleration.y, imu_data.acceleration.z, accel_rate,
                               imu_data.angular_velocity.x, imu_data.angular_velocity.y, imu_data.angular_velocity.z, gyro_rate);
+
+                // Check if IMU readings are stable
+                if (quat_rate >= 50.0f && accel_rate >= 50.0f && gyro_rate >= 50.0f)
+                    digitalWrite(LED_R_PIN, LOW); // Red (IMU) ON
             }
         }
 
