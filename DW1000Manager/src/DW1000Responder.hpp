@@ -55,6 +55,13 @@ namespace UWBRanging
          * @return true if initialized and ready
          */
         bool IsActive();
+
+        /**
+         * @brief Get latest ranging result
+         * @return Latest ranging result
+         * @note Uses optimistic locking
+         */
+        RangingResult GetLatestResult();
     }
 
 } // namespace UWBRanging
